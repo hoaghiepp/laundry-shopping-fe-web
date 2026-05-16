@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laundry Unified App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Mobile simulator styling */
+        body {
+            background-color: #f3f4f6;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .mobile-frame {
+            width: 100%;
+            max-width: 400px;
+            height: 850px;
+            background: white;
+            border-radius: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            position: relative;
+            overflow: hidden;
+            border: 8px solid #1f2937;
+        }
+        .screen-content {
+            height: calc(100% - 70px); /* Minus bottom nav */
+            overflow-y: auto;
+            padding-bottom: 80px;
+        }
+        
+        /* FIX QUAN TRỌNG: Thêm !important để đảm bảo ẩn được popup */
+        .hide { display: none !important; }
+        
+        .modal { 
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0; 
+            background: rgba(0,0,0,0.5); z-index: 100; 
+            display: flex; align-items: flex-end;
+        }
+        .modal-content {
+            background: white; width: 100%; border-radius: 20px 20px 0 0;
+            padding: 20px; animation: slideUp 0.3s ease-out;
+        }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+        
+        .active-nav { color: #3b82f6; }
+        .inactive-nav { color: #9ca3af; }
+    </style>
+</head>
+<body>
+
+<div class="mobile-frame">
+    <!-- Status Bar (Fake) -->
+    <div class="bg-blue-600 text-white px-4 py-2 flex justify-between text-xs items-center sticky top-0 z-50">
+        <span>09:41</span>
+        <div class="flex gap-2">
+            <i class="fas fa-signal"></i>
+            <i class="fas fa-wifi"></i>
+            <i class="fas fa-battery-full"></i>
+        </div>
+    </div>
+
+    <!-- MAIN CONTENT AREA -->
+    
+    <!-- 1. HOME SCREEN -->
+    <div id="screen-home" class="screen-content bg-gray-50">
+        <!-- Header Section -->
+        <div class="bg-blue-600 text-white p-5 pb-20 rounded-b-[40px] shadow-lg relative z-10">
+            <div class="flex justify-between items-start mb-4">
+                <!-- User Info - Click to open Profile -->
+                <div onclick="switchTab('screen-profile')" class="cursor-pointer group">
+                    <p class="text-blue-100 text-sm">Xin chào,</p>
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-xl font-bold group-hover:underline">Nguyễn Văn A</h2>
+                        <i class="fas fa-pen text-[10px] bg-blue-500 p-1 rounded-full opacity-50 group-hover:opacity-100"></i>
+                    </div>
+                    <!-- Location & Store Finder -->
+                    <div class="flex items-center gap-2 mt-1" onclick="event.stopPropagation();">
+                        <p class="text-xs text-blue-200 truncate max-w-[120px]"><i class="fas fa-map-marker-alt mr-1"></i> Royal City, HN</p>
+                        <button onclick="switchTab('screen-stores')" class="bg-blue-500 hover:bg-blue-400 px-2 py-1 rounded-lg text-[10px] flex items-center transition shadow-sm border border-blue-400">
+                            <i class="fas fa-store mr-1"></i> Tìm tiệm
+                        </button>
+                    </div>
+                </div>
+                <div class="bg-blue-500 p-2 rounded-full relative cursor-pointer hover:bg-blue-400 transition">
+                    <i class="fas fa-bell"></i>
+                    <span class="absolute top-0 right-0 bg-red-500 w-3 h-3 rounded-full border-2 border-blue-600"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Asset Card (Unified Wallet) - Đưa ra ngoài và dùng Margin Âm -->
+        <div class="px-5 -mt-12 relative z-20">
+            <div class="bg-white text-gray-800 rounded-2xl p-4 shadow-xl flex justify-between items-center">
+                <div>
+                    <p class="text-xs text-gray-500 uppercase font-semibold">Số dư khả dụng</p>
+                    <p class="text-xl font-bold text-blue-600">550.000đ</p>
+                    <div class="flex gap-2 mt-1">
+                        <span class="text-[10px] bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded-full border border-yellow-200"><i class="fas fa-crown mr-1"></i>Gold Member</span>
+                        <span class="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded-full border border-green-200">Gói Giặt: Còn 2</span>
+                    </div>
+                </div>
+                <button onclick="switchTab('screen-wallet')" class="bg-blue-100 text-blue-600 px-3 py-2 rounded-xl text-sm font-medium hover:bg-blue-200 transition">
+                    <i class="fas fa-plus mr-1"></i> Nạp
+                </button>
+            </div>
+        </div>
+
+        <!-- PROMOTION BANNERS -->
+        <div class="mt-6 px-5">
+            <div class="flex justify-between items-end mb-3">
+                <h3 class="font-bold text-gray-800">Ưu đãi dành cho bạn</h3>
+                <button onclick="switchTab('screen-all-offers')" class="text-xs text-blue-600 font-medium hover:underline">Xem tất cả</button>
+            </div>
+            <div class="flex overflow-x-auto gap-3 pb-2" style="scrollbar-width: none;">
+                <!-- Banner 1: Top up -->
+                <div class="min-w-[280px] bg-gradient-to-r from-pink-500 to-rose-500 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden flex items-center justify-between">
+                    <div class="relative z-10">
+                        <span class="bg-white/20 text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider mb-1 inline-block border border-white/20">Hot Deal</span>
+                        <h3 class="font-bold text-lg leading-tight mb-1">Nạp 500k<br>Tặng ngay 50k</h3>
+                        <p class="text-[10px] opacity-90 mb-2">Chỉ áp dụng trong ngày</p>
+                        <button onclick="switchTab('screen-wallet')" class="text-xs bg-white text-rose-600 px-4 py-1.5 rounded-lg font-bold shadow-sm hover:bg-rose-50 transition">Nạp ngay</button>
+                    </div>
+                    <div class="text-7xl opacity-20 absolute -right-2 -bottom-6 rotate-12">
+                        <i class="fas fa-wallet"></i>
+                    </div>
+                    <div class="absolute top-0 right-0 w-20 h-20 bg-white opacity-10 rounded-full -mr-10 -mt-10"></div>
+                </div>
+
+                <!-- Banner 2: Package Deal -->
+                <div class="min-w-[280px] bg-gradient-to-r from-violet-500 to-purple-600 rounded-2xl p-4 text-white shadow-lg relative overflow-hidden flex items-center justify-between">
+                    <div class="relative z-10">
+                        <span class="bg-white/20 text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider mb-1 inline-block border border-white/20">Tiết kiệm 20%</span>
+                        <h3 class="font-bold text-lg leading-tight mb-1">Gói Giặt Tháng<br>Chỉ 299k</h3>
+                        <p class="text-[10px] opacity-90 mb-2">Miễn phí giao nhận</p>
+                        <button onclick="switchTab('screen-wallet')" class="text-xs bg-white text-purple-600 px-4 py-1.5 rounded-lg font-bold shadow-sm hover:bg-purple-50 transition">Xem Gói</button>
+                    </div>
+                    <div class="text-7xl opacity-20 absolute -right-2 -bottom-6 rotate-12">
+                        <i class="fas fa-box-open"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Unified Retail Section -->
+        <div class="px-5 mt-8">
+            <div class="flex justify-between items-end mb-3">
+                <h3 class="font-bold text-gray-800">Mua sắm tiện ích</h3>
+                <button onclick="switchTab('screen-all-products')" class="text-xs text-blue-600 font-medium hover:underline">Xem tất cả</button>
+            </div>
+            
+            <div class="flex overflow-x-auto gap-4 pb-4" style="scrollbar-width: none;">
+                <!-- Product 1: CLICK TO OPEN DETAIL -->
+                <div onclick="openProductDetail()" class="min-w-[140px] bg-white p-3 rounded-2xl shadow-sm border border-gray-100 relative cursor-pointer active:scale-95 transition">
+                    <div class="absolute top-2 right-2 bg-red-100 text-red-600 text-[10px] px-1.5 rounded">-10%</div>
+                    <div class="h-24 bg-gray-100 rounded-xl mb-2 flex items-center justify-center text-gray-400">
+                        <i class="fas fa-bottle-water text-3xl"></i>
+                    </div>
+                    <h4 class="text-sm font-bold text-gray-700 truncate">Nước giặt Omo</h4>
+                    <div class="flex justify-between items-center mt-2">
+                        <span class="text-blue-600 font-bold text-sm">120k</span>
+                        <button class="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700">+</button>
+                    </div>
+                </div>
+
+                <!-- Product 2 -->
+                <div class="min-w-[140px] bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+                    <div class="h-24 bg-gray-100 rounded-xl mb-2 flex items-center justify-center text-gray-400">
+                        <i class="fas fa-box-open text-3xl"></i>
+                    </div>
+                    <h4 class="text-sm font-bold text-gray-700 truncate">Giấy thơm Bounce</h4>
+                    <div class="flex justify-between items-center mt-2">
+                        <span class="text-blue-600 font-bold text-sm">50k</span>
+                        <button class="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center shadow-lg hover:bg-blue-700">+</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Quick Actions (Service) -->
+        <div class="px-5 mt-2">
+            <div class="flex justify-between items-end mb-3">
+                <h3 class="font-bold text-gray-800">Dịch vụ Giặt là</h3>
+                <button onclick="switchTab('screen-all-services')" class="text-xs text-blue-600 font-medium hover:underline">Xem tất cả</button>
+            </div>
+            <div class="grid grid-cols-4 gap-3 text-center">
+                <div class="flex flex-col items-center group cursor-pointer">
+                    <div class="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center text-blue-600 mb-2 shadow-sm border border-blue-100 group-hover:bg-blue-100 transition">
+                        <i class="fas fa-tshirt text-xl"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-600 group-hover:text-blue-600">Giặt Sấy</span>
+                </div>
+                <div class="flex flex-col items-center group cursor-pointer">
+                    <div class="w-14 h-14 bg-purple-50 rounded-2xl flex items-center justify-center text-purple-600 mb-2 shadow-sm border border-purple-100 group-hover:bg-purple-100 transition">
+                        <i class="fas fa-user-tie text-xl"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-600 group-hover:text-purple-600">Giặt Khô</span>
+                </div>
+                <div class="flex flex-col items-center group cursor-pointer">
+                    <div class="w-14 h-14 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-600 mb-2 shadow-sm border border-orange-100 group-hover:bg-orange-100 transition">
+                        <i class="fas fa-shoe-prints text-xl"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-600 group-hover:text-orange-600">Giặt Giày</span>
+                </div>
+                <div class="flex flex-col items-center group cursor-pointer">
+                    <div class="w-14 h-14 bg-green-50 rounded-2xl flex items-center justify-center text-green-600 mb-2 shadow-sm border border-green-100 group-hover:bg-green-100 transition">
+                        <i class="fas fa-couch text-xl"></i>
+                    </div>
+                    <span class="text-xs font-medium text-gray-600 group-hover:text-green-600">Sofa/Rèm</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Current Order Floating Status -->
+        <div onclick="switchTab('screen-order-list')" class="mx-5 mt-6 bg-white rounded-xl p-3 shadow-md border-l-4 border-blue-500 flex items-center justify-between cursor-pointer group hover:shadow-lg transition">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center text-blue-500 group-hover:bg-blue-600 group-hover:text-white transition">
+                    <i class="fas fa-truck-loading"></i>
+                </div>
+                <div>
+                    <p class="text-xs text-gray-500">Đơn hàng #DH001</p>
+                    <p class="text-sm font-bold text-gray-800">Shipper đang đến lấy đồ</p>
+                </div>
+            </div>
+            <i class="fas fa-chevron-right text-gray-300 text-sm group-hover:text-blue-500"></i>
+        </div>
+
+        <!-- BUSINESS INFO FOOTER -->
+        <div class="mt-8 bg-white p-6 border-t border-gray-200">
+            <div class="text-center mb-6">
+                <h4 class="font-bold text-blue-600 text-lg mb-1">LAUNDRY PRO</h4>
+                <p class="text-xs text-gray-500">Hệ thống giặt là & Chăm sóc quần áo 4.0</p>
+            </div>
+            
+            <div class="space-y-3">
+                <div class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center text-blue-600 shadow-sm">
+                        <i class="fas fa-phone-alt text-xs"></i>
+                    </div>
+                    <div>
+                        <p class="text-[10px] text-gray-400 font-bold uppercase">Hotline hỗ trợ</p>
+                        <p class="text-sm font-bold text-gray-800">1900 6868</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+                    <div class="w-8 h-8 bg-white rounded-full flex items-center justify-center text-blue-600 shadow-sm">
+                        <i class="fas fa-clock text-xs"></i>
+                    </div>
+                    <div>
+                        <p class="text-[10px] text-gray-400 font-bold uppercase">Giờ làm việc</p>
+                        <p class="text-sm font-bold text-gray-800">07:00 - 22:00 (Hàng ngày)</p>
+                    </div>
+                </div>
+                <button onclick="switchTab('screen-stores')" class="w-full bg-gray-100 text-gray-600 py-3 rounded-xl text-xs font-bold hover:bg-gray-200 transition mt-2">
+                    Xem danh sách 12 cửa hàng <i class="fas fa-arrow-right ml-1"></i>
+                </button>
+            </div>
+            
+            <div class="flex justify-center gap-4 mt-6 text-gray-300">
+                <i class="fab fa-facebook text-xl hover:text-blue-600 cursor-pointer"></i>
+                <i class="fab fa-instagram text-xl hover:text-pink-600 cursor-pointer"></i>
+                <i class="fas fa-globe text-xl hover:text-blue-400 cursor-pointer"></i>
+            </div>
+            <p class="text-[10px] text-gray-300 text-center mt-4">© 2024 Laundry Pro Inc.</p>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: ALL OFFERS -->
+    <div id="screen-all-offers" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center gap-2">
+            <button onclick="switchTab('screen-home')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                <i class="fas fa-arrow-left text-gray-600"></i>
+            </button>
+            <h2 class="text-lg font-bold">Tất cả Ưu đãi</h2>
+        </div>
+        <div class="p-4 space-y-4">
+            <!-- Offer 1 -->
+            <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                <div class="flex gap-4">
+                    <div class="w-20 h-20 bg-pink-100 rounded-xl flex items-center justify-center text-pink-500 text-2xl">
+                        <i class="fas fa-gift"></i>
+                    </div>
+                    <div class="flex-1">
+                        <span class="text-[10px] bg-pink-100 text-pink-600 px-2 py-0.5 rounded font-bold">HOT</span>
+                        <h4 class="font-bold text-gray-800">Nạp 500k tặng 50k</h4>
+                        <p class="text-xs text-gray-500 mt-1">Áp dụng cho mọi dịch vụ giặt là.</p>
+                        <button onclick="switchTab('screen-wallet')" class="mt-2 text-xs bg-pink-500 text-white px-3 py-1.5 rounded-lg font-bold">Mua ngay</button>
+                    </div>
+                </div>
+            </div>
+            <!-- Offer 2 -->
+            <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                <div class="flex gap-4">
+                    <div class="w-20 h-20 bg-purple-100 rounded-xl flex items-center justify-center text-purple-500 text-2xl">
+                        <i class="fas fa-ticket-alt"></i>
+                    </div>
+                    <div class="flex-1">
+                        <span class="text-[10px] bg-purple-100 text-purple-600 px-2 py-0.5 rounded font-bold">GÓI THÁNG</span>
+                        <h4 class="font-bold text-gray-800">Combo Giặt Sấy 30 Ngày</h4>
+                        <p class="text-xs text-gray-500 mt-1">Giới hạn 10kg/lần. Tiết kiệm 30%</p>
+                        <button onclick="switchTab('screen-wallet')" class="mt-2 text-xs bg-purple-600 text-white px-3 py-1.5 rounded-lg font-bold">Xem chi tiết</button>
+                    </div>
+                </div>
+            </div>
+             <!-- Offer 3 -->
+             <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+                <div class="flex gap-4">
+                    <div class="w-20 h-20 bg-green-100 rounded-xl flex items-center justify-center text-green-500 text-2xl">
+                        <i class="fas fa-shoe-prints"></i>
+                    </div>
+                    <div class="flex-1">
+                        <span class="text-[10px] bg-green-100 text-green-600 px-2 py-0.5 rounded font-bold">GIÀY</span>
+                        <h4 class="font-bold text-gray-800">Giặt 3 đôi tặng 1 đôi</h4>
+                        <p class="text-xs text-gray-500 mt-1">Dành cho giày sneaker/thể thao.</p>
+                        <button onclick="switchTab('screen-wallet')" class="mt-2 text-xs bg-green-600 text-white px-3 py-1.5 rounded-lg font-bold">Mua ngay</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: ALL SERVICES -->
+    <div id="screen-all-services" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center gap-2">
+            <button onclick="switchTab('screen-home')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                <i class="fas fa-arrow-left text-gray-600"></i>
+            </button>
+            <h2 class="text-lg font-bold">Dịch vụ Giặt là</h2>
+        </div>
+        <div class="p-4 grid grid-cols-3 gap-4">
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-tshirt"></i></div>
+                <span class="text-xs font-bold text-gray-700">Giặt sấy</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-purple-50 text-purple-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-user-tie"></i></div>
+                <span class="text-xs font-bold text-gray-700">Giặt khô</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-orange-50 text-orange-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-shoe-prints"></i></div>
+                <span class="text-xs font-bold text-gray-700">Giặt giày</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-couch"></i></div>
+                <span class="text-xs font-bold text-gray-700">Sofa/Rèm</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-pink-50 text-pink-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-paw"></i></div>
+                <span class="text-xs font-bold text-gray-700">Thú bông</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-yellow-50 text-yellow-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-vest"></i></div>
+                <span class="text-xs font-bold text-gray-700">Áo da/lông</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-teal-50 text-teal-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-child"></i></div>
+                <span class="text-xs font-bold text-gray-700">Đồ trẻ em</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-spray-can"></i></div>
+                <span class="text-xs font-bold text-gray-700">Tẩy điểm</span>
+            </div>
+            <div class="bg-white p-3 rounded-xl shadow-sm flex flex-col items-center text-center">
+                <div class="w-12 h-12 bg-gray-50 text-gray-600 rounded-full flex items-center justify-center mb-2"><i class="fas fa-ellipsis-h"></i></div>
+                <span class="text-xs font-bold text-gray-700">Khác</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: ALL PRODUCTS -->
+    <div id="screen-all-products" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <button onclick="switchTab('screen-home')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                    <i class="fas fa-arrow-left text-gray-600"></i>
+                </button>
+                <h2 class="text-lg font-bold">Cửa hàng Tiện ích</h2>
+            </div>
+            <i class="fas fa-search text-gray-500"></i>
+        </div>
+        <div class="p-4 grid grid-cols-2 gap-4">
+            <!-- Product 1 -->
+            <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                <div class="h-32 bg-gray-100 rounded-lg flex items-center justify-center mb-2 text-gray-400">
+                    <i class="fas fa-bottle-water text-4xl"></i>
+                </div>
+                <h4 class="text-sm font-bold text-gray-800">Nước giặt Omo</h4>
+                <div class="flex justify-between items-center mt-2">
+                    <span class="text-blue-600 font-bold">120k</span>
+                    <button class="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center">+</button>
+                </div>
+            </div>
+            <!-- Product 2 -->
+            <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                <div class="h-32 bg-gray-100 rounded-lg flex items-center justify-center mb-2 text-gray-400">
+                    <i class="fas fa-box-open text-4xl"></i>
+                </div>
+                <h4 class="text-sm font-bold text-gray-800">Giấy thơm</h4>
+                <div class="flex justify-between items-center mt-2">
+                    <span class="text-blue-600 font-bold">50k</span>
+                    <button class="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center">+</button>
+                </div>
+            </div>
+            <!-- Product 3 -->
+            <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                <div class="h-32 bg-gray-100 rounded-lg flex items-center justify-center mb-2 text-gray-400">
+                    <i class="fas fa-soap text-4xl"></i>
+                </div>
+                <h4 class="text-sm font-bold text-gray-800">Tẩy lồng giặt</h4>
+                <div class="flex justify-between items-center mt-2">
+                    <span class="text-blue-600 font-bold">85k</span>
+                    <button class="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center">+</button>
+                </div>
+            </div>
+            <!-- Product 4 -->
+            <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                <div class="h-32 bg-gray-100 rounded-lg flex items-center justify-center mb-2 text-gray-400">
+                    <i class="fas fa-hanger text-4xl"></i>
+                </div>
+                <h4 class="text-sm font-bold text-gray-800">Set 10 Móc áo</h4>
+                <div class="flex justify-between items-center mt-2">
+                    <span class="text-blue-600 font-bold">30k</span>
+                    <button class="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center">+</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: STORE LIST / LOCATOR -->
+    <div id="screen-stores" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <button onclick="switchTab('screen-home')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                    <i class="fas fa-arrow-left text-gray-600"></i>
+                </button>
+                <h2 class="text-lg font-bold">Hệ thống Cửa hàng</h2>
+            </div>
+            <button class="text-blue-600 text-sm font-bold"><i class="fas fa-map-marked-alt"></i> Bản đồ</button>
+        </div>
+
+        <!-- Search Bar -->
+        <div class="p-4 pb-0">
+            <div class="bg-white p-3 rounded-xl shadow-sm border border-gray-200 flex items-center gap-3">
+                <i class="fas fa-search text-gray-400"></i>
+                <input type="text" placeholder="Tìm theo quận, tên đường..." class="bg-transparent outline-none text-sm w-full">
+            </div>
+        </div>
+
+        <div class="p-4 space-y-4">
+            <!-- Store Item 1 -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h4 class="font-bold text-gray-800 text-base">Laundry Pro - Royal City</h4>
+                        <p class="text-xs text-gray-500 mt-1 max-w-[200px]"><i class="fas fa-map-marker-alt text-blue-500 mr-1"></i> Tòa R2, Royal City, 72 Nguyễn Trãi, Thanh Xuân, Hà Nội</p>
+                    </div>
+                    <div class="text-center">
+                        <span class="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-1 rounded-full">Mở cửa</span>
+                        <p class="text-xs font-bold text-blue-600 mt-2">0.5 km</p>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-4 border-t border-gray-50 pt-3">
+                    <button class="flex-1 bg-blue-50 text-blue-600 py-2 rounded-lg text-xs font-bold hover:bg-blue-100">
+                        <i class="fas fa-phone-alt mr-1"></i> Gọi điện
+                    </button>
+                    <button class="flex-1 bg-blue-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-blue-700 shadow-sm shadow-blue-200">
+                        <i class="fas fa-directions mr-1"></i> Chỉ đường
+                    </button>
+                </div>
+            </div>
+
+            <!-- Store Item 2 -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h4 class="font-bold text-gray-800 text-base">Laundry Pro - Times City</h4>
+                        <p class="text-xs text-gray-500 mt-1 max-w-[200px]"><i class="fas fa-map-marker-alt text-blue-500 mr-1"></i> Park 5, Times City, 458 Minh Khai, Hai Bà Trưng, Hà Nội</p>
+                    </div>
+                    <div class="text-center">
+                        <span class="bg-green-100 text-green-700 text-[10px] font-bold px-2 py-1 rounded-full">Mở cửa</span>
+                        <p class="text-xs font-bold text-blue-600 mt-2">5.2 km</p>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-4 border-t border-gray-50 pt-3">
+                    <button class="flex-1 bg-blue-50 text-blue-600 py-2 rounded-lg text-xs font-bold hover:bg-blue-100">
+                        <i class="fas fa-phone-alt mr-1"></i> Gọi điện
+                    </button>
+                    <button class="flex-1 bg-blue-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-blue-700 shadow-sm shadow-blue-200">
+                        <i class="fas fa-directions mr-1"></i> Chỉ đường
+                    </button>
+                </div>
+            </div>
+
+            <!-- Store Item 3 -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 opacity-80">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h4 class="font-bold text-gray-800 text-base">Laundry Pro - Cầu Giấy</h4>
+                        <p class="text-xs text-gray-500 mt-1 max-w-[200px]"><i class="fas fa-map-marker-alt text-blue-500 mr-1"></i> 123 Cầu Giấy, Quan Hoa, Cầu Giấy, Hà Nội</p>
+                    </div>
+                    <div class="text-center">
+                        <span class="bg-gray-100 text-gray-500 text-[10px] font-bold px-2 py-1 rounded-full">Đóng cửa</span>
+                        <p class="text-xs font-bold text-blue-600 mt-2">8.1 km</p>
+                    </div>
+                </div>
+                <div class="flex gap-2 mt-4 border-t border-gray-50 pt-3">
+                    <button class="flex-1 bg-gray-100 text-gray-500 py-2 rounded-lg text-xs font-bold hover:bg-gray-200">
+                        <i class="fas fa-phone-alt mr-1"></i> Gọi điện
+                    </button>
+                    <button class="flex-1 bg-white border border-gray-200 text-gray-600 py-2 rounded-lg text-xs font-bold hover:bg-gray-50">
+                        <i class="fas fa-directions mr-1"></i> Chỉ đường
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: PROFILE SETTINGS -->
+    <div id="screen-profile" class="screen-content bg-gray-50 hide">
+        <!-- Header -->
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <button onclick="switchTab('screen-home')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                    <i class="fas fa-arrow-left text-gray-600"></i>
+                </button>
+                <h2 class="text-lg font-bold">Hồ sơ cá nhân</h2>
+            </div>
+            <button class="text-blue-600 text-sm font-bold">Lưu</button>
+        </div>
+
+        <div class="p-5 pb-20">
+            <!-- Avatar Section -->
+            <div class="flex flex-col items-center mb-8 relative">
+                <div class="w-24 h-24 bg-gray-200 rounded-full overflow-hidden border-4 border-white shadow-lg relative">
+                    <img src="https://i.pravatar.cc/150?img=12" alt="Avatar" class="w-full h-full object-cover">
+                </div>
+                <button class="absolute bottom-0 right-1/2 translate-x-10 bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center shadow-md hover:bg-blue-700">
+                    <i class="fas fa-camera text-xs"></i>
+                </button>
+            </div>
+
+            <!-- Form Fields -->
+            <div class="bg-white rounded-xl shadow-sm p-4 space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Họ và tên</label>
+                    <input type="text" value="Nguyễn Văn A" class="w-full text-sm border-b border-gray-200 py-2 outline-none focus:border-blue-500 font-semibold text-gray-800">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Số điện thoại</label>
+                    <input type="tel" value="0912 345 678" class="w-full text-sm border-b border-gray-200 py-2 outline-none focus:border-blue-500 font-semibold text-gray-800">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Email</label>
+                    <input type="email" value="nguyenvana@gmail.com" class="w-full text-sm border-b border-gray-200 py-2 outline-none focus:border-blue-500 font-semibold text-gray-800">
+                </div>
+            </div>
+
+            <!-- Address Management -->
+            <div class="mt-6">
+                <div class="flex justify-between items-center mb-3">
+                    <h3 class="text-sm font-bold text-gray-800">Sổ địa chỉ</h3>
+                    <button class="text-xs text-blue-600 font-bold">+ Thêm mới</button>
+                </div>
+                <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+                    <div class="p-4 border-b border-gray-100 flex items-start gap-3">
+                        <div class="mt-1 text-blue-600"><i class="fas fa-home"></i></div>
+                        <div class="flex-1">
+                            <p class="text-xs font-bold text-gray-400 uppercase mb-1">Mặc định - Nhà riêng</p>
+                            <p class="text-sm font-bold text-gray-800">Tòa R2, Royal City</p>
+                            <p class="text-xs text-gray-500 mt-1">72 Nguyễn Trãi, Thanh Xuân, Hà Nội</p>
+                        </div>
+                        <button class="text-gray-400 hover:text-blue-600"><i class="fas fa-edit"></i></button>
+                    </div>
+                    <div class="p-4 flex items-start gap-3">
+                        <div class="mt-1 text-orange-500"><i class="fas fa-briefcase"></i></div>
+                        <div class="flex-1">
+                            <p class="text-xs font-bold text-gray-400 uppercase mb-1">Cơ quan</p>
+                            <p class="text-sm font-bold text-gray-800">Keangnam Landmark 72</p>
+                            <p class="text-xs text-gray-500 mt-1">Phạm Hùng, Nam Từ Liêm, Hà Nội</p>
+                        </div>
+                        <button class="text-gray-400 hover:text-blue-600"><i class="fas fa-edit"></i></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logout Button -->
+            <button class="w-full mt-8 bg-gray-100 text-red-500 py-3 rounded-xl font-bold text-sm hover:bg-red-50 hover:text-red-600 transition">
+                <i class="fas fa-sign-out-alt mr-2"></i> Đăng xuất
+            </button>
+            <p class="text-center text-[10px] text-gray-400 mt-4">Phiên bản 1.0.0</p>
+        </div>
+    </div>
+
+    <!-- NEW MODAL: PRODUCT DETAIL (Fixed Close Button) -->
+    <div id="screen-product-detail" class="modal hide">
+        <div class="modal-content relative">
+            <!-- Increased hit area and z-index for close button -->
+            <button onclick="closeProductDetail()" class="absolute top-2 right-2 p-3 text-gray-400 hover:text-gray-800 z-50 rounded-full hover:bg-gray-100 transition">
+                <i class="fas fa-times text-xl"></i>
+            </button>
+            <div class="flex gap-4 mt-2">
+                <div class="w-24 h-24 bg-gray-100 rounded-xl flex items-center justify-center text-gray-400 shrink-0">
+                    <i class="fas fa-bottle-water text-4xl"></i>
+                </div>
+                <div>
+                    <h3 class="font-bold text-lg text-gray-800">Nước giặt Omo Matic</h3>
+                    <p class="text-sm text-gray-500 mb-2">Túi 3.6kg - Hương Thư Thái</p>
+                    <div class="flex items-center gap-2">
+                        <span class="text-lg font-bold text-blue-600">120.000đ</span>
+                        <span class="text-xs text-gray-400 line-through">135.000đ</span>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-4 border-t border-gray-100 pt-4">
+                <p class="text-sm font-bold text-gray-700 mb-2">Mô tả sản phẩm</p>
+                <p class="text-xs text-gray-500 leading-relaxed">Công nghệ màn chắn kháng bẩn Polyshield Xanh giúp đánh bay vết bẩn cứng đầu mà không cần vò trước. Hương thơm bền lâu.</p>
+            </div>
+            <div class="mt-6 flex items-center justify-between">
+                <div class="flex items-center gap-4 bg-gray-100 rounded-lg px-3 py-2">
+                    <button class="w-6 h-6 bg-white rounded flex items-center justify-center shadow-sm text-gray-600"><i class="fas fa-minus text-xs"></i></button>
+                    <span class="font-bold text-gray-800">1</span>
+                    <button class="w-6 h-6 bg-white rounded flex items-center justify-center shadow-sm text-blue-600"><i class="fas fa-plus text-xs"></i></button>
+                </div>
+                <button onclick="addToCartMock()" class="flex-1 ml-4 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-200">
+                    Thêm vào giỏ - 120k
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. CART SCREEN (Smart Cart Logic - UPDATED ADDRESS) -->
+    <div id="screen-cart" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10">
+            <h2 class="text-lg font-bold text-center">Giỏ hàng Hợp nhất</h2>
+        </div>
+
+        <div class="p-4 space-y-4">
+            <!-- Delivery Address Section (Interactive) -->
+            <div onclick="switchTab('screen-address-list')" class="bg-white p-3 rounded-xl shadow-sm border border-blue-200 flex items-center justify-between cursor-pointer group">
+                <div class="flex items-center gap-3 overflow-hidden">
+                    <div class="w-8 h-8 bg-blue-50 rounded-full flex items-center justify-center text-blue-600 shrink-0">
+                        <i class="fas fa-map-marker-alt"></i>
+                    </div>
+                    <div class="flex-1 min-w-0" id="cart-address-display">
+                        <p class="text-[10px] text-gray-500 uppercase font-bold">Giao đến:</p>
+                        <p class="text-sm font-bold text-gray-800 truncate group-hover:text-blue-600">Nguyễn Văn A - 0912345678</p>
+                        <p class="text-xs text-gray-500 truncate">Tòa R2, Royal City, 72 Nguyễn Trãi...</p>
+                    </div>
+                </div>
+                <i class="fas fa-chevron-right text-gray-300 text-xs"></i>
+            </div>
+
+            <!-- Item 1: Service -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3">
+                <div class="w-16 h-16 bg-blue-50 rounded-lg flex items-center justify-center text-blue-500">
+                    <i class="fas fa-tshirt"></i>
+                </div>
+                <div class="flex-1">
+                    <div class="flex justify-between">
+                        <h4 class="font-bold text-gray-800">Giặt Chăn Bông (5kg)</h4>
+                        <i class="fas fa-trash text-gray-300 text-xs"></i>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-2">Dịch vụ</p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-blue-600 font-bold">50.000đ</span>
+                        <div class="flex items-center gap-3 bg-gray-100 rounded-lg px-2 py-1">
+                            <span class="text-gray-500">-</span>
+                            <span class="text-sm font-bold">1</span>
+                            <span class="text-blue-600">+</span>
+                        </div>
+                    </div>
+                    <!-- Smart Logic Indicator -->
+                    <div class="mt-2 bg-green-50 text-green-700 text-[10px] px-2 py-1 rounded border border-green-100 flex items-center gap-1">
+                        <i class="fas fa-check-circle"></i> Sẽ trừ 1 lượt Gói Chăn
+                    </div>
+                </div>
+            </div>
+
+            <!-- Item 2: Retail -->
+            <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3">
+                <div class="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center text-gray-400">
+                    <i class="fas fa-bottle-water"></i>
+                </div>
+                <div class="flex-1">
+                    <div class="flex justify-between">
+                        <h4 class="font-bold text-gray-800">Nước xả vải Downy</h4>
+                        <i class="fas fa-trash text-gray-300 text-xs"></i>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-2">Hàng hóa</p>
+                    <div class="flex justify-between items-center">
+                        <span class="text-blue-600 font-bold">120.000đ</span>
+                        <div class="flex items-center gap-3 bg-gray-100 rounded-lg px-2 py-1">
+                            <span class="text-gray-500">-</span>
+                            <span class="text-sm font-bold">1</span>
+                            <span class="text-blue-600">+</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic Form: Pickup Time -->
+            <div class="bg-blue-50 p-4 rounded-xl border border-blue-100">
+                <h4 class="text-sm font-bold text-blue-800 mb-3"><i class="far fa-clock mr-2"></i>Chọn giờ lấy đồ</h4>
+                <div class="flex gap-2 overflow-x-auto pb-1">
+                    <button class="bg-white border border-gray-200 text-gray-400 px-3 py-2 rounded-lg text-xs min-w-[70px] opacity-50 cursor-not-allowed">09:00<br>Full</button>
+                    <button class="bg-blue-600 text-white px-3 py-2 rounded-lg text-xs min-w-[70px] shadow-lg shadow-blue-200">10:00<br>Trống</button>
+                    <button class="bg-white border border-gray-200 text-gray-600 px-3 py-2 rounded-lg text-xs min-w-[70px]">11:00<br>Trống</button>
+                </div>
+            </div>
+
+            <!-- Financial Summary -->
+            <div class="bg-white p-4 rounded-xl shadow-sm">
+                <div class="flex justify-between text-sm mb-2 text-gray-600">
+                    <span>Tổng tạm tính</span>
+                    <span>170.000đ</span>
+                </div>
+                <div class="flex justify-between text-sm mb-2 text-green-600">
+                    <span><i class="fas fa-ticket-alt mr-1"></i>Gói Giặt Chăn</span>
+                    <span>-50.000đ</span>
+                </div>
+                <div class="flex justify-between text-sm mb-2 text-orange-600">
+                    <span><i class="fas fa-wallet mr-1"></i>Trừ Ví (Dư 30k)</span>
+                    <span>-30.000đ</span>
+                </div>
+                <div class="border-t pt-3 mt-2 flex justify-between items-center">
+                    <span class="font-bold text-gray-800">Cần trả (COD)</span>
+                    <span class="text-xl font-bold text-blue-600">90.000đ</span>
+                </div>
+            </div>
+
+            <button onclick="switchTab('screen-success')" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition">
+                Đặt hàng ngay
+            </button>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: ADD NEW ADDRESS -->
+    <div id="screen-address-add" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center gap-2">
+            <button onclick="switchTab('screen-address-list')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                <i class="fas fa-arrow-left text-gray-600"></i>
+            </button>
+            <h2 class="text-lg font-bold">Thêm địa chỉ mới</h2>
+        </div>
+        <div class="p-4">
+            <div class="bg-white p-4 rounded-xl shadow-sm space-y-4">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Tên người nhận</label>
+                    <input type="text" placeholder="Nhập tên" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Số điện thoại</label>
+                    <input type="tel" placeholder="Nhập số điện thoại" class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-blue-500">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 mb-1">Tỉnh/Thành phố</label>
+                        <select class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
+                            <option>Hà Nội</option>
+                            <option>TP.HCM</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-500 mb-1">Quận/Huyện</label>
+                        <select class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 bg-white">
+                            <option>Thanh Xuân</option>
+                            <option>Cầu Giấy</option>
+                        </select>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Địa chỉ chi tiết (Số nhà, Tên đường)</label>
+                    <input type="text" placeholder="VD: Số 10, Ngõ 5..." class="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 outline-none focus:border-blue-500">
+                </div>
+                
+                <div class="h-32 bg-gray-100 rounded-lg flex items-center justify-center text-gray-400 text-xs">
+                    <i class="fas fa-map-marked-alt mr-2"></i> Bản đồ định vị
+                </div>
+
+                <div class="flex items-center gap-2 mt-2">
+                    <div class="w-10 h-6 bg-blue-600 rounded-full relative cursor-pointer"><div class="absolute right-1 top-1 w-4 h-4 bg-white rounded-full shadow-sm"></div></div>
+                    <span class="text-xs text-gray-600">Đặt làm địa chỉ mặc định</span>
+                </div>
+            </div>
+            <button onclick="switchTab('screen-address-list')" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg mt-6 hover:bg-blue-700">Lưu Địa Chỉ</button>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: ORDER SUCCESS -->
+    <div id="screen-success" class="screen-content bg-white hide flex flex-col items-center justify-center p-8 text-center">
+        <div class="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center text-green-500 mb-6 animate-bounce">
+            <i class="fas fa-check text-5xl"></i>
+        </div>
+        <h2 class="text-2xl font-bold text-gray-800 mb-2">Đặt hàng thành công!</h2>
+        <p class="text-sm text-gray-500 mb-8">Cảm ơn bạn đã sử dụng dịch vụ. Shipper sẽ liên hệ với bạn trong thời gian sớm nhất.</p>
+        
+        <div class="w-full bg-gray-50 p-4 rounded-xl mb-8 text-left">
+            <div class="flex justify-between text-sm mb-2">
+                <span class="text-gray-500">Mã đơn hàng:</span>
+                <span class="font-bold text-gray-800">#DH001</span>
+            </div>
+            <div class="flex justify-between text-sm mb-2">
+                <span class="text-gray-500">Tổng thanh toán:</span>
+                <span class="font-bold text-blue-600">90.000đ</span>
+            </div>
+            <div class="flex justify-between text-sm">
+                <span class="text-gray-500">Phương thức:</span>
+                <span class="font-bold text-gray-800">COD (Tiền mặt)</span>
+            </div>
+        </div>
+
+        <button onclick="switchTab('screen-order-list')" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-blue-700 mb-3">Xem Đơn Hàng</button>
+        <button onclick="switchTab('screen-home')" class="w-full bg-white text-gray-500 py-3 rounded-xl font-bold hover:bg-gray-50">Về Trang Chủ</button>
+    </div>
+
+    <!-- NEW SCREEN: ORDER LIST (RESTORED) -->
+    <div id="screen-order-list" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center justify-between">
+            <h2 class="text-lg font-bold">Đơn hàng của tôi</h2>
+            <i class="fas fa-history text-gray-500"></i>
+        </div>
+
+        <!-- Order Tabs -->
+        <div class="flex bg-white border-b border-gray-100">
+            <button class="flex-1 py-3 text-sm font-bold text-blue-600 border-b-2 border-blue-600">Đang thực hiện (2)</button>
+            <button class="flex-1 py-3 text-sm font-medium text-gray-500 hover:text-gray-800">Lịch sử</button>
+        </div>
+
+        <div class="p-4 space-y-4">
+            <!-- Order Item 1 (Active) -->
+            <div onclick="switchTab('screen-order')" class="bg-white rounded-xl p-4 shadow-sm border border-gray-100 cursor-pointer active:scale-95 transition">
+                <div class="flex justify-between items-start mb-2">
+                    <span class="bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-1 rounded">Đang giao</span>
+                    <span class="text-xs text-gray-400">#DH001 • 10:00 AM</span>
+                </div>
+                <div class="flex gap-3">
+                    <div class="w-12 h-12 bg-blue-50 rounded-lg flex items-center justify-center text-blue-500 shrink-0">
+                        <i class="fas fa-truck-loading"></i>
+                    </div>
+                    <div class="flex-1">
+                        <h4 class="font-bold text-gray-800 text-sm">Shipper đang đến lấy đồ</h4>
+                        <p class="text-xs text-gray-500 mt-1">2 Dịch vụ • 1 Hàng hóa</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="font-bold text-blue-600 text-sm">90.000đ</p>
+                        <p class="text-[10px] text-gray-400">COD</p>
+                    </div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-gray-50 flex justify-between items-center">
+                    <div class="flex -space-x-2">
+                        <div class="w-6 h-6 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-[8px]"><i class="fas fa-tshirt"></i></div>
+                        <div class="w-6 h-6 rounded-full bg-gray-200 border-2 border-white flex items-center justify-center text-[8px]"><i class="fas fa-bottle-water"></i></div>
+                    </div>
+                    <span class="text-xs text-blue-500 font-medium">Xem chi tiết <i class="fas fa-chevron-right text-[10px]"></i></span>
+                </div>
+            </div>
+
+            <!-- Order Item 2 (Active - Exception) -->
+            <div onclick="switchTab('screen-order')" class="bg-white rounded-xl p-4 shadow-sm border border-l-4 border-red-500 cursor-pointer active:scale-95 transition relative overflow-hidden">
+                <!-- Alert Badge -->
+                <div class="absolute top-0 right-0 bg-red-500 text-white text-[9px] px-2 py-0.5 rounded-bl-lg font-bold">Cần xử lý</div>
+                
+                <div class="flex justify-between items-start mb-2">
+                    <span class="bg-red-100 text-red-700 text-[10px] font-bold px-2 py-1 rounded">Sự cố</span>
+                    <span class="text-xs text-gray-400">#DH002 • Hôm qua</span>
+                </div>
+                <div class="flex gap-3">
+                    <div class="w-12 h-12 bg-red-50 rounded-lg flex items-center justify-center text-red-500 shrink-0">
+                        <i class="fas fa-exclamation-triangle"></i>
+                    </div>
+                    <div class="flex-1">
+                        <h4 class="font-bold text-gray-800 text-sm">Phát hiện lỗi tại Xưởng</h4>
+                        <p class="text-xs text-gray-500 mt-1">Giặt hấp Vest nam</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="font-bold text-gray-800 text-sm">--</p>
+                    </div>
+                </div>
+                <div class="mt-3 pt-3 border-t border-gray-50 flex justify-between items-center">
+                    <span class="text-xs text-red-500 font-bold">Vui lòng xác nhận ngay</span>
+                    <span class="text-xs text-blue-500 font-medium">Xem chi tiết <i class="fas fa-chevron-right text-[10px]"></i></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NEW SCREEN: ADDRESS LIST (UPDATED with Selection Logic) -->
+    <div id="screen-address-list" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <button onclick="switchTab('screen-cart')" class="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100">
+                    <i class="fas fa-arrow-left text-gray-600"></i>
+                </button>
+                <h2 class="text-lg font-bold">Chọn địa chỉ</h2>
+            </div>
+            <button onclick="switchTab('screen-address-add')" class="text-blue-600 text-sm font-bold">Thêm mới</button>
+        </div>
+        <div class="p-4 space-y-3">
+            <!-- Address 1 (Default) -->
+            <div id="addr-1" onclick="selectAddress('addr-1', 'Nguyễn Văn A - 0912345678', 'Tòa R2, Royal City, 72 Nguyễn Trãi, Thượng Đình, Thanh Xuân, Hà Nội', 'Nhà riêng')" class="bg-blue-50 border border-blue-500 p-4 rounded-xl cursor-pointer relative address-item">
+                <div class="absolute top-4 right-4 text-blue-600 check-icon"><i class="fas fa-check-circle"></i></div>
+                <div class="flex items-center justify-between mb-1">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-blue-200 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded">Nhà riêng</span>
+                        <span class="text-gray-400 text-[10px]"><i class="fas fa-star text-yellow-400 mr-1"></i>Mặc định</span>
+                    </div>
+                </div>
+                <h4 class="font-bold text-gray-800 text-sm">Nguyễn Văn A - 0912345678</h4>
+                <p class="text-xs text-gray-600 mt-1">Tòa R2, Royal City, 72 Nguyễn Trãi, Thượng Đình, Thanh Xuân, Hà Nội</p>
+                <div class="mt-3 pt-2 border-t border-blue-200 flex justify-end">
+                    <button class="text-[10px] text-gray-400 font-medium hover:text-blue-600" onclick="event.stopPropagation()">Đặt làm mặc định</button>
+                </div>
+            </div>
+            
+            <!-- Address 2 -->
+            <div id="addr-2" onclick="selectAddress('addr-2', 'Nguyễn Văn A - 0912345678', 'Tòa nhà Keangnam, Phạm Hùng, Mễ Trì, Nam Từ Liêm, Hà Nội', 'Cơ quan')" class="bg-white border border-gray-200 p-4 rounded-xl cursor-pointer hover:border-blue-300 transition address-item relative">
+                <div class="absolute top-4 right-4 text-blue-600 check-icon hidden"><i class="fas fa-check-circle"></i></div>
+                <div class="flex items-center justify-between mb-1">
+                    <div class="flex items-center gap-2">
+                        <span class="bg-orange-100 text-orange-800 text-[10px] font-bold px-2 py-0.5 rounded">Cơ quan</span>
+                    </div>
+                </div>
+                <h4 class="font-bold text-gray-800 text-sm">Nguyễn Văn A - 0912345678</h4>
+                <p class="text-xs text-gray-600 mt-1">Tòa nhà Keangnam, Phạm Hùng, Mễ Trì, Nam Từ Liêm, Hà Nội</p>
+                <div class="mt-3 pt-2 border-t border-gray-100 flex justify-end">
+                    <button class="text-[10px] text-blue-600 font-medium hover:underline" onclick="event.stopPropagation()">Đặt làm mặc định</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. ORDER DETAIL & EXCEPTION SCREEN (Handling Issues) -->
+    <div id="screen-order" class="screen-content bg-gray-50 hide">
+        <div class="bg-white p-4 shadow-sm sticky top-0 z-10 flex items-center">
+            <!-- Back button returns to Order List -->
+            <button onclick="switchTab('screen-order-list')" class="mr-3 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"><i class="fas fa-arrow-left"></i></button>
+            <h2 class="text-lg font-bold">Chi tiết đơn #DH001</h2>
+        </div>
+
+        <div class="p-4">
+            <!-- Tracking Timeline -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm mb-4">
+                <div class="relative pl-4 border-l-2 border-gray-200 space-y-6">
+                    <div class="relative">
+                        <div class="absolute -left-[21px] bg-green-500 w-3 h-3 rounded-full border-2 border-white ring-2 ring-green-100"></div>
+                        <p class="text-xs text-gray-400">10:00 AM</p>
+                        <h4 class="text-sm font-bold text-gray-800">Shipper đã lấy đồ</h4>
+                    </div>
+                    <div class="relative">
+                        <div class="absolute -left-[21px] bg-green-500 w-3 h-3 rounded-full border-2 border-white ring-2 ring-green-100"></div>
+                        <p class="text-xs text-gray-400">10:30 AM</p>
+                        <h4 class="text-sm font-bold text-gray-800">Đã về Tiệm (Định danh xong)</h4>
+                    </div>
+                    <div class="relative">
+                        <div class="absolute -left-[21px] bg-red-500 w-4 h-4 rounded-full border-2 border-white ring-4 ring-red-100 animate-pulse"></div>
+                        <p class="text-xs text-red-500 font-bold">HÀNH ĐỘNG CẦN THIẾT</p>
+                        <h4 class="text-sm font-bold text-red-600">Phát hiện sự cố tại Xưởng</h4>
+                    </div>
+                    <div class="relative opacity-50">
+                        <div class="absolute -left-[21px] bg-gray-300 w-3 h-3 rounded-full"></div>
+                        <h4 class="text-sm font-bold text-gray-400">Đang giặt</h4>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Exception Card (The USP Feature) -->
+            <div class="bg-white rounded-2xl shadow-lg border border-red-100 overflow-hidden mb-20">
+                <div class="bg-red-50 p-3 flex items-center gap-2 text-red-700 border-b border-red-100">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <span class="text-sm font-bold">Xác nhận sự cố</span>
+                </div>
+                <div class="p-4">
+                    <p class="text-sm text-gray-600 mb-3">Nhân viên xưởng phát hiện: <span class="font-bold text-gray-800">Rách nách áo Vest</span></p>
+                    
+                    <!-- Fake Image of Damage -->
+                    <div class="w-full h-40 bg-gray-200 rounded-lg mb-4 flex items-center justify-center relative overflow-hidden group">
+                         <div class="absolute inset-0 bg-black bg-opacity-30 group-hover:bg-opacity-10 transition"></div>
+                         <span class="text-gray-500 bg-white px-3 py-1 rounded text-xs shadow">Ảnh lỗi từ Xưởng</span>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <button class="bg-gray-100 text-gray-700 py-2 rounded-lg text-xs font-bold hover:bg-gray-200">
+                            Trả lại (Hoàn tiền)
+                        </button>
+                        <button class="bg-red-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-red-700 shadow-md shadow-red-200">
+                            Tiếp tục giặt
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-gray-400 mt-2 text-center">*Chọn Trả lại: Tiền dịch vụ sẽ được hoàn về Ví ngay lập tức.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4. WALLET / ASSETS SCREEN -->
+    <div id="screen-wallet" class="screen-content bg-gray-50 hide">
+         <!-- Wallet Header -->
+         <div class="bg-gradient-to-br from-blue-600 to-indigo-700 p-6 pb-12 rounded-b-[40px] text-white shadow-xl relative">
+            <h2 class="text-lg font-bold text-center mb-6">Tài sản của tôi</h2>
+            <div class="text-center">
+                <p class="text-blue-200 text-sm mb-1">Tổng tài sản ảo</p>
+                <h1 class="text-3xl font-bold">550.000đ</h1>
+                <div class="mt-4 flex justify-center gap-4">
+                    <div class="bg-white/20 backdrop-blur px-4 py-2 rounded-xl text-center">
+                        <p class="text-xs text-blue-100">Ví tiền</p>
+                        <p class="font-bold">550k</p>
+                    </div>
+                    <div class="bg-white/20 backdrop-blur px-4 py-2 rounded-xl text-center">
+                        <p class="text-xs text-blue-100">Điểm</p>
+                        <p class="font-bold">120</p>
+                    </div>
+                </div>
+            </div>
+         </div>
+
+         <!-- Packages Container -->
+         <div class="px-5 -mt-8 relative z-10 space-y-4">
+             <!-- Action Card -->
+             <div class="bg-white p-4 rounded-2xl shadow-lg flex justify-around">
+                 <button class="flex flex-col items-center gap-1">
+                     <div class="w-10 h-10 bg-blue-50 rounded-full flex items-center justify-center text-blue-600"><i class="fas fa-wallet"></i></div>
+                     <span class="text-xs font-medium">Nạp tiền</span>
+                 </button>
+                 <button class="flex flex-col items-center gap-1">
+                    <div class="w-10 h-10 bg-orange-50 rounded-full flex items-center justify-center text-orange-500"><i class="fas fa-ticket-alt"></i></div>
+                    <span class="text-xs font-medium">Mua Gói</span>
+                </button>
+                 <button class="flex flex-col items-center gap-1">
+                    <div class="w-10 h-10 bg-gray-50 rounded-full flex items-center justify-center text-gray-500"><i class="fas fa-history"></i></div>
+                    <span class="text-xs font-medium">Lịch sử</span>
+                </button>
+             </div>
+
+             <!-- My Active Packages -->
+             <h3 class="font-bold text-gray-800 mt-4 px-1">Gói dịch vụ đang có</h3>
+             
+             <!-- Package Card 1 -->
+             <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 relative overflow-hidden">
+                 <div class="absolute right-0 top-0 bg-green-100 text-green-700 text-[10px] px-2 py-1 rounded-bl-lg font-bold">ACTIVE</div>
+                 <div class="flex gap-3">
+                     <div class="w-12 h-12 bg-green-50 rounded-xl flex items-center justify-center text-green-600">
+                         <i class="fas fa-bed"></i>
+                     </div>
+                     <div>
+                         <h4 class="font-bold text-gray-800">Gói Giặt Chăn Mùa Đông</h4>
+                         <p class="text-xs text-gray-500">Hết hạn: 31/12/2025</p>
+                     </div>
+                 </div>
+                 <div class="mt-3 bg-gray-100 rounded-full h-2 w-full overflow-hidden">
+                     <div class="bg-green-500 h-full w-2/3"></div>
+                 </div>
+                 <div class="flex justify-between text-xs mt-1">
+                     <span class="text-gray-500">Đã dùng: 1</span>
+                     <span class="font-bold text-gray-800">Còn lại: 2 lượt</span>
+                 </div>
+             </div>
+             
+             <!-- Package Card 2 (Expired) -->
+             <div class="bg-gray-50 rounded-2xl p-4 shadow-sm border border-gray-200 opacity-70">
+                <div class="flex gap-3">
+                    <div class="w-12 h-12 bg-gray-200 rounded-xl flex items-center justify-center text-gray-500">
+                        <i class="fas fa-tshirt"></i>
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-gray-600">Gói Giặt Sấy 10kg</h4>
+                        <p class="text-xs text-red-500">Đã hết hạn hôm qua</p>
+                    </div>
+                </div>
+                <div class="mt-3 text-center">
+                    <button class="text-xs text-blue-600 font-bold border border-blue-200 px-3 py-1 rounded-full bg-white">Mua lại</button>
+                </div>
+            </div>
+
+         </div>
+    </div>
+
+
+    <!-- BOTTOM NAVIGATION -->
+    <div class="absolute bottom-0 w-full bg-white border-t border-gray-200 px-6 py-3 flex justify-between items-center z-50 rounded-b-[20px]">
+        <button onclick="switchTab('screen-home')" class="nav-btn active-nav flex flex-col items-center" data-target="screen-home">
+            <i class="fas fa-home text-xl mb-1"></i>
+            <span class="text-[10px]">Trang chủ</span>
+        </button>
+        <button onclick="switchTab('screen-cart')" class="nav-btn inactive-nav flex flex-col items-center relative" data-target="screen-cart">
+            <div class="relative">
+                <i class="fas fa-shopping-bag text-xl mb-1"></i>
+                <span class="absolute -top-1 -right-2 bg-red-500 text-white text-[8px] w-3.5 h-3.5 flex items-center justify-center rounded-full">2</span>
+            </div>
+            <span class="text-[10px]">Giỏ hàng</span>
+        </button>
+        <button onclick="switchTab('screen-order-list')" class="nav-btn inactive-nav flex flex-col items-center" data-target="screen-order-list">
+            <i class="fas fa-clipboard-list text-xl mb-1"></i>
+            <span class="text-[10px]">Đơn hàng</span>
+        </button>
+        <button onclick="switchTab('screen-wallet')" class="nav-btn inactive-nav flex flex-col items-center" data-target="screen-wallet">
+            <i class="fas fa-wallet text-xl mb-1"></i>
+            <span class="text-[10px]">Tài sản</span>
+        </button>
+    </div>
+</div>
+
+<script>
+    function switchTab(screenId) {
+        // Hide all screens
+        document.querySelectorAll('.screen-content').forEach(el => el.classList.add('hide'));
+        document.querySelectorAll('.modal').forEach(el => el.classList.add('hide'));
+        // Show target screen
+        const target = document.getElementById(screenId);
+        if(target) target.classList.remove('hide');
+        
+        // Update nav style
+        document.querySelectorAll('.nav-btn').forEach(btn => {
+            btn.classList.remove('active-nav');
+            btn.classList.add('inactive-nav');
+            if(btn.dataset.target === screenId) {
+                btn.classList.add('active-nav');
+                btn.classList.remove('inactive-nav');
+            }
+        });
+    }
+
+    function openProductDetail() {
+        document.getElementById('screen-product-detail').classList.remove('hide');
+    }
+
+    function closeProductDetail() {
+        document.getElementById('screen-product-detail').classList.add('hide');
+    }
+
+    function addToCartMock() {
+        document.getElementById('screen-product-detail').classList.add('hide');
+        switchTab('screen-cart');
+    }
+
+    function selectAddress(id, name, address, type) {
+        // 1. Reset all styles
+        document.querySelectorAll('.address-item').forEach(el => {
+            el.classList.remove('bg-blue-50', 'border-blue-500');
+            el.classList.add('bg-white', 'border-gray-200');
+            el.querySelector('.check-icon').classList.add('hidden');
+        });
+
+        // 2. Set active style
+        const activeEl = document.getElementById(id);
+        activeEl.classList.remove('bg-white', 'border-gray-200');
+        activeEl.classList.add('bg-blue-50', 'border-blue-500');
+        activeEl.querySelector('.check-icon').classList.remove('hidden');
+
+        // 3. Update Cart UI
+        const cartDisplay = document.getElementById('cart-address-display');
+        cartDisplay.innerHTML = `
+            <p class="text-[10px] text-gray-500 uppercase font-bold">Giao đến:</p>
+            <p class="text-sm font-bold text-gray-800 truncate group-hover:text-blue-600">${name}</p>
+            <p class="text-xs text-gray-500 truncate">${address}</p>
+        `;
+
+        // 4. Return to Cart
+        setTimeout(() => {
+            switchTab('screen-cart');
+        }, 300);
+    }
+</script>
+
+</body>
+</html>

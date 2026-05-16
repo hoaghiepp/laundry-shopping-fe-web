@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Laundry Pro Auth</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f3f4f6;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .mobile-frame {
+            width: 100%;
+            max-width: 400px;
+            height: 850px;
+            background: white;
+            border-radius: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            position: relative;
+            overflow: hidden;
+            border: 8px solid #1f2937;
+        }
+        .role-btn.active {
+            background-color: #2563eb; /* blue-600 */
+            color: white;
+            border-color: #2563eb;
+        }
+        .role-btn.inactive {
+            background-color: white;
+            color: #4b5563; /* gray-600 */
+            border-color: #e5e7eb; /* gray-200 */
+        }
+        /* Animation */
+        .fade-in {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .hidden { display: none !important; }
+        
+        .otp-btn.disabled {
+            background-color: #e5e7eb;
+            color: #9ca3af;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+
+<div class="mobile-frame">
+    <!-- Status Bar -->
+    <div class="bg-white px-4 py-2 flex justify-between text-xs items-center sticky top-0 z-50 text-gray-800">
+        <span>09:41</span>
+        <div class="flex gap-2">
+            <i class="fas fa-signal"></i>
+            <i class="fas fa-wifi"></i>
+            <i class="fas fa-battery-full"></i>
+        </div>
+    </div>
+
+    <div class="h-full flex flex-col p-6 overflow-y-auto">
+        
+        <!-- BRANDING -->
+        <div class="mt-4 mb-6 text-center">
+            <div class="w-16 h-16 bg-blue-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg shadow-blue-200 mb-3 transform rotate-3">
+                <i class="fas fa-tshirt text-2xl text-white"></i>
+            </div>
+            <h1 class="text-xl font-bold text-gray-800">Laundry Pro</h1>
+        </div>
+
+        <!-- ROLE SELECTION (Fixed at top) -->
+        <div id="role-selector">
+            <p class="text-[10px] font-bold text-gray-400 uppercase text-center mb-2">Chọn vai trò</p>
+            <div class="grid grid-cols-3 gap-2 mb-6">
+                <button onclick="selectRole('user')" id="btn-user" class="role-btn active py-2 rounded-lg border text-[10px] font-bold flex flex-col items-center gap-1 transition shadow-sm">
+                    <i class="fas fa-user text-sm"></i>
+                    Khách hàng
+                </button>
+                <button onclick="selectRole('store')" id="btn-store" class="role-btn inactive py-2 rounded-lg border text-[10px] font-bold flex flex-col items-center gap-1 transition shadow-sm">
+                    <i class="fas fa-store text-sm"></i>
+                    Tiệm (Hub)
+                </button>
+                <button onclick="selectRole('factory')" id="btn-factory" class="role-btn inactive py-2 rounded-lg border text-[10px] font-bold flex flex-col items-center gap-1 transition shadow-sm">
+                    <i class="fas fa-industry text-sm"></i>
+                    Xưởng
+                </button>
+            </div>
+        </div>
+
+        <!-- AUTH CONTAINERS -->
+        <div id="auth-wrapper" class="flex-1 relative">
+            
+            <!-- 1. LOGIN VIEW -->
+            <div id="login-view" class="fade-in">
+                <h2 id="login-title" class="text-xl font-bold text-gray-800 mb-1">Đăng nhập 👋</h2>
+                <p id="login-subtitle" class="text-xs text-gray-500 mb-6">Chào mừng bạn quay trở lại</p>
+
+                <div class="space-y-4">
+                    <!-- Phone Input -->
+                    <div>
+                        <label id="login-label-username" class="block text-[10px] font-bold text-gray-500 mb-1">SỐ ĐIỆN THOẠI</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-phone-alt"></i></span>
+                            <input type="tel" id="login-phone" placeholder="0912 xxx xxx" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- Password Field (Now Default for User too) -->
+                    <div id="login-group-password" class="">
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">MẬT KHẨU</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-lock"></i></span>
+                            <input type="password" placeholder="••••••••" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition">
+                            <span class="absolute right-4 top-3.5 text-gray-400 cursor-pointer hover:text-blue-600"><i class="fas fa-eye"></i></span>
+                        </div>
+                    </div>
+
+                    <!-- Remember Me Checkbox -->
+                    <div class="flex justify-between items-center mt-2">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <div class="relative">
+                                <input type="checkbox" class="peer sr-only">
+                                <div class="w-4 h-4 border border-gray-300 rounded bg-white peer-checked:bg-blue-600 peer-checked:border-blue-600 transition"></div>
+                                <i class="fas fa-check text-[10px] text-white absolute top-0.5 left-0.5 opacity-0 peer-checked:opacity-100"></i>
+                            </div>
+                            <span class="text-xs text-gray-600 font-medium">Ghi nhớ đăng nhập</span>
+                        </label>
+                        <!-- Nút Quên mật khẩu có sự kiện click -->
+                        <button onclick="toggleAuthMode('forgot')" class="text-xs font-bold text-blue-600 hover:underline">Quên mật khẩu?</button>
+                    </div>
+
+                    <!-- OTP Field (Alternative Login - Hidden by default) -->
+                    <div id="login-group-otp" class="hidden">
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">MÃ XÁC THỰC (OTP)</label>
+                        <div class="flex gap-2">
+                            <div class="relative flex-1">
+                                <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-shield-alt"></i></span>
+                                <input type="number" placeholder="Nhập 6 số" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition tracking-widest">
+                            </div>
+                            <button onclick="sendOtp('login')" id="btn-otp-login" class="otp-btn bg-blue-100 text-blue-600 px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-200 transition whitespace-nowrap min-w-[100px]">
+                                Lấy mã
+                            </button>
+                        </div>
+                        <p class="text-[10px] text-gray-400 mt-1 italic">Mã sẽ được gửi qua SMS/Zalo.</p>
+                    </div>
+                </div>
+
+                <button onclick="handleLogin()" class="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition mt-6 flex items-center justify-center gap-2">
+                    <span>Đăng nhập</span>
+                    <i class="fas fa-arrow-right text-xs"></i>
+                </button>
+
+                <!-- Alternative Login Methods (For User) -->
+                <div id="login-alternatives" class="mt-4 text-center">
+                    <button onclick="switchLoginMethod()" id="btn-switch-method" class="text-xs text-gray-500 hover:text-blue-600 font-medium mb-6">
+                        Đăng nhập bằng OTP (Không cần mật khẩu)
+                    </button>
+                </div>
+
+                <!-- Footer Switch -->
+                <div class="mt-4 text-center pb-6 border-t border-gray-100 pt-4">
+                    <p class="text-xs text-gray-500">Chưa có tài khoản? <button onclick="toggleAuthMode('register')" class="text-blue-600 font-bold hover:underline">Đăng ký ngay</button></p>
+                </div>
+            </div>
+
+            <!-- 2. REGISTER VIEW -->
+            <div id="register-view" class="fade-in hidden">
+                <h2 id="reg-title" class="text-xl font-bold text-gray-800 mb-1">Tạo tài khoản mới 🚀</h2>
+                <p id="reg-subtitle" class="text-xs text-gray-500 mb-6">Điền thông tin để bắt đầu</p>
+
+                <div class="space-y-3">
+                    <!-- Dynamic Field: Employee Code (Hidden for User) -->
+                    <div id="field-employee-code" class="hidden bg-yellow-50 p-3 rounded-xl border border-yellow-200 mb-2">
+                        <label class="block text-[10px] font-bold text-yellow-700 mb-1 uppercase">Mã định danh / Mã kích hoạt <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-2.5 text-yellow-600"><i class="fas fa-id-badge"></i></span>
+                            <input type="text" placeholder="Nhập mã do Admin cấp" class="w-full bg-white border border-yellow-300 rounded-lg py-2 pl-9 pr-3 text-sm font-bold text-gray-800 outline-none focus:border-yellow-500">
+                        </div>
+                        <p class="text-[9px] text-yellow-600 mt-1 italic">Liên hệ quản lý để lấy mã này.</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">HỌ VÀ TÊN</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-user"></i></span>
+                            <input type="text" placeholder="Nguyễn Văn A" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- Phone & OTP Group for Register -->
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">SỐ ĐIỆN THOẠI</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-phone-alt"></i></span>
+                            <input type="tel" id="reg-phone" placeholder="0912 xxx xxx" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- OTP for Register (User Only) -->
+                    <div id="reg-group-otp" class="">
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">XÁC THỰC OTP <span class="text-red-500">*</span></label>
+                        <div class="flex gap-2">
+                            <div class="relative flex-1">
+                                <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-shield-alt"></i></span>
+                                <input type="number" placeholder="Nhập 6 số" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition tracking-widest">
+                            </div>
+                            <button onclick="sendOtp('reg')" id="btn-otp-reg" class="otp-btn bg-blue-100 text-blue-600 px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-200 transition whitespace-nowrap min-w-[100px]">
+                                Lấy mã
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Password Field (Show for all in register to set up password) -->
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">TẠO MẬT KHẨU MỚI</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-lock"></i></span>
+                            <input type="password" placeholder="Tạo mật khẩu" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+                </div>
+
+                <button onclick="handleRegister()" class="w-full bg-green-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-green-200 hover:bg-green-700 transition mt-6">
+                    Đăng ký tài khoản
+                </button>
+
+                <!-- Footer Switch -->
+                <div class="mt-6 text-center pb-6">
+                    <p class="text-xs text-gray-500">Đã có tài khoản? <button onclick="toggleAuthMode('login')" class="text-blue-600 font-bold hover:underline">Đăng nhập</button></p>
+                </div>
+            </div>
+
+            <!-- 3. FORGOT PASSWORD VIEW (NEW) -->
+            <div id="forgot-view" class="fade-in hidden">
+                <button onclick="toggleAuthMode('login')" class="absolute -top-10 left-0 text-gray-500 hover:text-blue-600 text-sm font-bold flex items-center gap-1">
+                    <i class="fas fa-arrow-left"></i> Quay lại
+                </button>
+
+                <h2 class="text-xl font-bold text-gray-800 mb-1">Quên mật khẩu? 🔒</h2>
+                <p class="text-xs text-gray-500 mb-6">Đừng lo, chúng tôi sẽ giúp bạn lấy lại ngay.</p>
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">NHẬP SỐ ĐIỆN THOẠI ĐÃ ĐĂNG KÝ</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-phone-alt"></i></span>
+                            <input type="tel" placeholder="0912 xxx xxx" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+
+                    <!-- OTP for Forgot Password -->
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">MÃ XÁC THỰC (OTP)</label>
+                        <div class="flex gap-2">
+                            <div class="relative flex-1">
+                                <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-shield-alt"></i></span>
+                                <input type="number" placeholder="Nhập 6 số" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition tracking-widest">
+                            </div>
+                            <button onclick="sendOtp('forgot')" id="btn-otp-forgot" class="otp-btn bg-blue-100 text-blue-600 px-4 py-2 rounded-xl text-xs font-bold hover:bg-blue-200 transition whitespace-nowrap min-w-[100px]">
+                                Lấy mã
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-bold text-gray-500 mb-1">ĐẶT MẬT KHẨU MỚI</label>
+                        <div class="relative">
+                            <span class="absolute left-4 top-3.5 text-gray-400"><i class="fas fa-key"></i></span>
+                            <input type="password" placeholder="Nhập mật khẩu mới" class="w-full bg-gray-50 border border-gray-200 rounded-xl py-3 pl-10 pr-4 text-sm font-semibold text-gray-800 outline-none focus:border-blue-500 transition">
+                        </div>
+                    </div>
+                </div>
+
+                <button onclick="handleForgotSubmit()" class="w-full bg-blue-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-blue-200 hover:bg-blue-700 transition mt-6">
+                    Xác nhận đổi mật khẩu
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentRole = 'user';
+    let currentMode = 'login'; // 'login', 'register', 'forgot'
+    let isOtpLogin = false;
+
+    function selectRole(role) {
+        currentRole = role;
+        
+        // 1. Update Buttons State
+        document.querySelectorAll('.role-btn').forEach(btn => {
+            btn.classList.remove('active');
+            btn.classList.add('inactive');
+        });
+        document.getElementById('btn-' + role).classList.remove('inactive');
+        document.getElementById('btn-' + role).classList.add('active');
+
+        // 2. Reset Login Method to Password
+        isOtpLogin = false;
+        
+        // 3. Reset View to Login
+        toggleAuthMode('login');
+        
+        // 4. Update UI content
+        updateUI();
+    }
+
+    function switchLoginMethod() {
+        isOtpLogin = !isOtpLogin;
+        const passGroup = document.getElementById('login-group-password');
+        const otpGroup = document.getElementById('login-group-otp');
+        const btnSwitch = document.getElementById('btn-switch-method');
+
+        if (isOtpLogin) {
+            passGroup.classList.add('hidden');
+            otpGroup.classList.remove('hidden');
+            btnSwitch.innerText = 'Đăng nhập bằng Mật khẩu';
+        } else {
+            passGroup.classList.remove('hidden');
+            otpGroup.classList.add('hidden');
+            btnSwitch.innerText = 'Đăng nhập bằng OTP (Không cần mật khẩu)';
+        }
+    }
+
+    function toggleAuthMode(mode) {
+        currentMode = mode;
+        const loginView = document.getElementById('login-view');
+        const regView = document.getElementById('register-view');
+        const forgotView = document.getElementById('forgot-view');
+        const roleSelector = document.getElementById('role-selector'); // Để ẩn role khi forgot pass
+
+        // Reset visibility
+        loginView.classList.add('hidden');
+        regView.classList.add('hidden');
+        forgotView.classList.add('hidden');
+        roleSelector.classList.remove('hidden'); // Default show
+
+        if (mode === 'login') {
+            loginView.classList.remove('hidden');
+        } else if (mode === 'register') {
+            regView.classList.remove('hidden');
+        } else if (mode === 'forgot') {
+            forgotView.classList.remove('hidden');
+            roleSelector.classList.add('hidden'); // Ẩn chọn role cho đỡ rối mắt
+        }
+        updateUI();
+    }
+
+    function updateUI() {
+        // Elements for Login
+        const loginTitle = document.getElementById('login-title');
+        const loginSubtitle = document.getElementById('login-subtitle');
+        const loginLabelUser = document.getElementById('login-label-username');
+        const loginGroupPass = document.getElementById('login-group-password');
+        const loginGroupOtp = document.getElementById('login-group-otp');
+        const loginAlternatives = document.getElementById('login-alternatives');
+
+        // Elements for Register
+        const regTitle = document.getElementById('reg-title');
+        const regSubtitle = document.getElementById('reg-subtitle');
+        const fieldEmployeeCode = document.getElementById('field-employee-code');
+        const regGroupOtp = document.getElementById('reg-group-otp');
+
+        if (currentMode === 'forgot') return; // Không cần update text nếu đang ở màn forgot
+
+        if (currentRole === 'user') {
+            // -- LOGIN USER --
+            loginTitle.innerText = 'Khách hàng thân mến 👋';
+            loginSubtitle.innerText = 'Đặt giặt & Mua sắm tiện lợi';
+            loginLabelUser.innerText = 'SỐ ĐIỆN THOẠI';
+            
+            // Mặc định login bằng Pass, có option switch sang OTP
+            if (!isOtpLogin) {
+                loginGroupPass.classList.remove('hidden');
+                loginGroupOtp.classList.add('hidden');
+            }
+            loginAlternatives.classList.remove('hidden'); // Show OTP switch button
+            
+            // -- REGISTER USER --
+            regTitle.innerText = 'Đăng ký Khách hàng';
+            regSubtitle.innerText = 'Tận hưởng ưu đãi thành viên mới';
+            fieldEmployeeCode.classList.add('hidden'); 
+            regGroupOtp.classList.remove('hidden'); // User đăng ký phải verify OTP
+
+        } else if (currentRole === 'store') {
+            // -- LOGIN STORE --
+            loginTitle.innerText = 'Cổng Nhân viên Tiệm 🏪';
+            loginSubtitle.innerText = 'Quản lý Hub & Điểm nhận trả';
+            loginLabelUser.innerText = 'MÃ NHÂN VIÊN / SĐT';
+            // Nhân viên chỉ login bằng Pass
+            loginGroupPass.classList.remove('hidden');
+            loginGroupOtp.classList.add('hidden');
+            loginAlternatives.classList.add('hidden'); // Hide OTP switch button
+
+            // -- REGISTER STORE --
+            regTitle.innerText = 'Kích hoạt TK Nhân viên Tiệm';
+            regSubtitle.innerText = 'Cần mã định danh từ Quản lý';
+            fieldEmployeeCode.classList.remove('hidden');
+            regGroupOtp.classList.add('hidden'); 
+
+        } else if (currentRole === 'factory') {
+            // -- LOGIN FACTORY --
+            loginTitle.innerText = 'Cổng Nhân viên Xưởng 🏭';
+            loginSubtitle.innerText = 'Kiểm soát quy trình giặt là';
+            loginLabelUser.innerText = 'MÃ NHÂN VIÊN';
+            // Nhân viên chỉ login bằng Pass
+            loginGroupPass.classList.remove('hidden');
+            loginGroupOtp.classList.add('hidden');
+            loginAlternatives.classList.add('hidden');
+
+            // -- REGISTER FACTORY --
+            regTitle.innerText = 'Kích hoạt TK Nhân viên Xưởng';
+            regSubtitle.innerText = 'Xác thực nhân sự nhà máy';
+            fieldEmployeeCode.classList.remove('hidden'); 
+            regGroupOtp.classList.add('hidden');
+        }
+    }
+
+    // Mock OTP Sending Function
+    function sendOtp(context) {
+        let btnId;
+        if (context === 'login') btnId = 'btn-otp-login';
+        else if (context === 'reg') btnId = 'btn-otp-reg';
+        else if (context === 'forgot') btnId = 'btn-otp-forgot';
+
+        let btn = document.getElementById(btnId);
+        
+        if (btn.classList.contains('disabled')) return;
+
+        // Start Countdown
+        let count = 60;
+        btn.classList.add('disabled');
+        btn.innerText = `Gửi lại (${count}s)`;
+        
+        let timer = setInterval(() => {
+            count--;
+            btn.innerText = `Gửi lại (${count}s)`;
+            if (count <= 0) {
+                clearInterval(timer);
+                btn.classList.remove('disabled');
+                btn.innerText = 'Lấy mã';
+            }
+        }, 1000);
+
+        alert('Mã OTP của bạn là: 123456');
+    }
+
+    function handleLogin() {
+        if (currentRole === 'user') {
+            alert('Đăng nhập KHÁCH HÀNG thành công! Chuyển hướng...');
+            window.location.href = 'index.html'; 
+        } else {
+            alert('Đăng nhập HỆ THỐNG (' + currentRole + ') thành công!');
+        }
+    }
+
+    function handleRegister() {
+        if (currentRole === 'user') {
+            alert('Đăng ký KHÁCH HÀNG thành công! Vui lòng đăng nhập.');
+            toggleAuthMode('login');
+        } else {
+            // Validate Employee Code Logic here
+            alert('Gửi yêu cầu kích hoạt (' + currentRole + ') thành công! Chờ Admin duyệt.');
+        }
+    }
+
+    function handleForgotSubmit() {
+        alert('Đổi mật khẩu thành công! Vui lòng đăng nhập lại với mật khẩu mới.');
+        toggleAuthMode('login');
+    }
+
+    // Init
+    updateUI();
+</script>
+
+</body>
+</html>

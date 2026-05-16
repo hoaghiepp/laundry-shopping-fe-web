@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "LaundryShopping",
+    "slug": "laundry-shopping-fe",
+    "version": "1.0.1",
+    "android": {
+      "package": "com.hiep0312.laundryfe",
+      "googleServicesFile": "./google-services.json",
+      "useNextNotificationsApi": true
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "orientation": "portrait",
+    "plugins": [
+      "expo-notifications",
+    ],
+    "web": {
+      "bundler": "metro",
+      "output": "server"
+    }
+  }
+}
