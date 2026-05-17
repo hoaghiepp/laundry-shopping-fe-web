@@ -1,5 +1,7 @@
+import { AddInventoryEmbeddedPanel } from "@/components/screens/store/AddInventoryEmbeddedPanel";
 import { BulkProductsForm } from "@/components/screens/store/components/BulkProductsForm";
 import { ProductType } from "@/constants/enum";
+import { STORE_WEB_NAV_HEIGHT } from "@/constants/storeWebLayout";
 import { compatAlert } from "@/lib/compatAlert";
 import { ProductItem } from "@/models/model";
 import { CreatePackageRequest, packageService, UpdatePackageRequest } from "@/services/api/packageProductService";
@@ -9,14 +11,15 @@ import { FontAwesome5 } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import React, { useEffect, useMemo, useState } from "react";
 import {
-    Image,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Image,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 
 interface PackageItem {
@@ -43,6 +46,59 @@ interface AddInventoryScreenProps {
   storeId?: string;
   productItem?: ProductItem | null;
   packageItem?: PackageItem | null;
+  /** Side panel under store header + web nav (store-home). */
+  embedded?: boolean;
+}
+
+type FormSnapshot = {
+  type: ProductType;
+  name: string;
+  sku: string;
+  price: string;
+  stockQuantity: string;
+  unit: string;
+  description: string;
+  selectedServiceId: string;
+  existingThumbnailUrl: string;
+  existingGalleryUrls: string[];
+  selectedCategoryIds: string[];
+};
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function snapshotFromProduct(product: ProductItem): FormSnapshot {
+  return {
+    type: product.type as ProductType,
+    name: product.name || "",
+    sku: product.sku || "",
+    price: product.price?.toString() || "",
+    stockQuantity: product.stock_quantity?.toString() || "",
+    unit: product.unit || "",
+    description: product.description || "",
+    selectedServiceId: "",
+    existingThumbnailUrl: product.thumbnail_url || "",
+    existingGalleryUrls: [...(product.gallery_urls || [])],
+    selectedCategoryIds: [],
+  };
+}
+
+function snapshotFromPackage(pkg: PackageItem): FormSnapshot {
+  return {
+    type: ProductType.ASSET,
+    name: pkg.name || "",
+    sku: "",
+    price: pkg.price?.toString() || "",
+    stockQuantity: pkg.quantity?.toString() || "",
+    unit: pkg.unit || "",
+    description: pkg.description || "",
+    selectedServiceId: pkg.service_product_id || "",
+    existingThumbnailUrl: pkg.thumbnail_url || "",
+    existingGalleryUrls: [...(pkg.gallery_urls || [])],
+    selectedCategoryIds: [],
+  };
 }
 
 export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
@@ -53,8 +109,13 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
   storeId,
   productItem,
   packageItem,
+  embedded = false,
 }) => {
   const isEditMode = !!(productItem || packageItem);
+  const sectionStyle = embedded ? styles.sectionEmbedded : styles.section;
+  const sectionTitleStyle = embedded ? styles.sectionTitleEmbedded : styles.sectionTitle;
+  const inputStyle = embedded ? [styles.input, styles.inputEmbedded] : styles.input;
+  const labelStyle = embedded ? [styles.label, styles.labelEmbedded] : styles.label;
   const editItem = productItem || packageItem;
   const editItemId = editItem?.id;
 
@@ -473,37 +534,170 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
     }
   };
 
+  const showSaveButton =
+    !(!isEditMode && type === ProductType.GOODS && addMode === "bulk");
+
+  const initialFormSnapshot = useMemo((): FormSnapshot | null => {
+    if (productItem) return snapshotFromProduct(productItem);
+    if (packageItem) return snapshotFromPackage(packageItem);
+    return null;
+  }, [productItem, packageItem]);
+
+  const isDirty = useMemo(() => {
+    if (!showSaveButton) return false;
+
+    if (!isEditMode) {
+      return !!(
+        name.trim() ||
+        sku.trim() ||
+        price.trim() ||
+        stockQuantity.trim() ||
+        unit.trim() ||
+        description.trim() ||
+        selectedServiceId ||
+        thumbnailImage ||
+        galleryImages.length > 0
+      );
+    }
+
+    if (!initialFormSnapshot) return false;
+    const initial = initialFormSnapshot;
+
+    if (type !== initial.type) return true;
+    if (name.trim() !== initial.name) return true;
+    if (sku.trim() !== initial.sku) return true;
+    if (price.trim() !== initial.price) return true;
+    if (stockQuantity.trim() !== initial.stockQuantity) return true;
+    if (unit.trim() !== initial.unit) return true;
+    if (description.trim() !== initial.description) return true;
+    if (selectedServiceId !== initial.selectedServiceId) return true;
+    if (thumbnailImage) return true;
+    if (galleryImages.length > 0) return true;
+    if (existingThumbnailUrl !== initial.existingThumbnailUrl) return true;
+    if (!arraysEqual(existingGalleryUrls, initial.existingGalleryUrls)) return true;
+    if (!arraysEqual(selectedCategoryIds, initial.selectedCategoryIds)) return true;
+
+    return false;
+  }, [
+    showSaveButton,
+    isEditMode,
+    initialFormSnapshot,
+    type,
+    name,
+    sku,
+    price,
+    stockQuantity,
+    unit,
+    description,
+    selectedServiceId,
+    thumbnailImage,
+    galleryImages.length,
+    existingThumbnailUrl,
+    existingGalleryUrls,
+    selectedCategoryIds,
+  ]);
+
+  const canSave = isDirty;
+
+  const useEmbeddedCompact =
+    embedded && showSaveButton && !(!isEditMode && type === ProductType.GOODS && addMode === "bulk");
+
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
+    <View style={[styles.container, embedded && styles.containerEmbedded]}>
+      <View style={[styles.header, embedded && styles.headerEmbedded]}>
         <View style={styles.headerLeft}>
           <TouchableOpacity
-            style={styles.backButton}
+            style={[styles.backButton, embedded && styles.backButtonEmbedded]}
             onPress={onBack}
             activeOpacity={0.7}
           >
             <FontAwesome5 name="arrow-left" size={16} color="#6B7280" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            {isEditMode ? "Chỉnh sửa tiện ích" : "Thêm tiện ích"}
-          </Text>
+          <View style={styles.headerTextBlock}>
+            <Text style={[styles.headerTitle, embedded && styles.headerTitleEmbedded]} numberOfLines={1}>
+              {isEditMode ? "Chỉnh sửa tiện ích" : "Thêm tiện ích"}
+            </Text>
+            {embedded && !useEmbeddedCompact && (
+              <Text style={styles.headerSubtitle} numberOfLines={2}>
+                {isDirty
+                  ? "Có thay đổi chưa lưu — nhấn Lưu để cập nhật"
+                  : "Chỉnh sửa thông tin, sau đó lưu"}
+              </Text>
+            )}
+            {useEmbeddedCompact && (
+              <Text style={styles.headerSubtitle} numberOfLines={1}>
+                {isDirty ? "Có thay đổi chưa lưu" : "Chỉnh sửa và lưu"}
+              </Text>
+            )}
+          </View>
         </View>
-        {!(!isEditMode && type === ProductType.GOODS && addMode === "bulk") && (
-          <TouchableOpacity onPress={handleSave} activeOpacity={0.7}>
-            <Text style={styles.saveButton}>Lưu</Text>
+        {showSaveButton && !embedded && (
+          <TouchableOpacity
+            onPress={handleSave}
+            activeOpacity={canSave ? 0.7 : 1}
+            disabled={!canSave}
+            style={[styles.saveButtonWrap, !canSave && styles.saveButtonWrapDisabled]}
+          >
+            <Text style={[styles.saveButton, !canSave && styles.saveButtonDisabled]}>Lưu</Text>
           </TouchableOpacity>
         )}
       </View>
 
+      {useEmbeddedCompact ? (
+        <AddInventoryEmbeddedPanel
+          isEditMode={isEditMode}
+          productItem={productItem}
+          packageItem={packageItem}
+          type={type}
+          setType={setType}
+          productTypes={productTypes}
+          name={name}
+          setName={setName}
+          stockQuantity={stockQuantity}
+          setStockQuantity={setStockQuantity}
+          sku={sku}
+          setSku={setSku}
+          priceDisplay={priceDisplay}
+          handlePriceChange={handlePriceChange}
+          unit={unit}
+          setUnit={setUnit}
+          description={description}
+          setDescription={setDescription}
+          thumbnailImage={thumbnailImage}
+          existingThumbnailUrl={existingThumbnailUrl}
+          setThumbnailImage={setThumbnailImage}
+          setExistingThumbnailUrl={setExistingThumbnailUrl}
+          pickThumbnail={pickThumbnail}
+          galleryImages={galleryImages}
+          existingGalleryUrls={existingGalleryUrls}
+          removeGalleryImage={removeGalleryImage}
+          setExistingGalleryUrls={setExistingGalleryUrls}
+          pickGalleryImages={pickGalleryImages}
+          isActive={isActive}
+          setIsActive={setIsActive}
+          showListingToggle={!!(isEditMode && onDelete)}
+          onToggleListing={isEditMode && onDelete ? handleToggleListingActive : undefined}
+          serviceSearch={serviceSearch}
+          setServiceSearch={setServiceSearch}
+          filteredServices={filteredServices}
+          selectedServiceId={selectedServiceId}
+          setSelectedServiceId={setSelectedServiceId}
+          loadingServices={loadingServices}
+        />
+      ) : (
       <ScrollView
         style={styles.content}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={[
+          styles.scrollContent,
+          embedded && styles.scrollContentEmbedded,
+          embedded && showSaveButton && styles.scrollContentWithFooter,
+        ]}
+        showsVerticalScrollIndicator={embedded}
       >
+        <View style={embedded ? styles.webPanelBody : undefined}>
         {!isEditMode && (
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Chế độ thêm</Text>
+          <View style={sectionStyle}>
+            <Text style={sectionTitleStyle}>Chế độ thêm</Text>
             <View style={styles.modeRow}>
               <TouchableOpacity
                 style={[styles.modeChip, addMode === "bulk" && styles.modeChipActive]}
@@ -538,7 +732,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
         )}
 
         {!isEditMode && addMode === "bulk" ? (
-          <View style={styles.section}>
+          <View style={sectionStyle}>
             <BulkProductsForm
               storeId={storeId}
               categories={categories}
@@ -549,11 +743,11 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
           <>
             {(!isEditMode && addMode === "single") ? null : (
               /* Type Selection (edit mode only, or legacy single product edit) */
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>
+              <View style={sectionStyle}>
+                <Text style={sectionTitleStyle}>
                   Loại tiện ích <Text style={styles.required}>*</Text>
                 </Text>
-                <View style={styles.typeGrid}>
+                <View style={[styles.typeGrid, embedded && styles.typeGridEmbedded]}>
                   {productTypes
                     .filter((item) => {
                       if (isEditMode && packageItem) return item.value === ProductType.ASSET;
@@ -565,7 +759,9 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
                       key={item.value}
                       style={[
                         styles.typeOption,
+                        embedded && styles.typeOptionEmbedded,
                         type === item.value && styles.typeOptionActive,
+                        embedded && type === item.value && styles.typeOptionEmbeddedActive,
                         isEditMode && packageItem && styles.typeOptionDisabled,
                         { borderColor: type === item.value ? item.color : "#E5E7EB" },
                       ]}
@@ -584,6 +780,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
                       <Text
                         style={[
                           styles.typeLabel,
+                          embedded && styles.typeLabelEmbedded,
                           type === item.value && { color: item.color },
                         ]}
                       >
@@ -596,17 +793,17 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             )}
 
             {/* Basic Information */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Thông tin cơ bản</Text>
+            <View style={sectionStyle}>
+              <Text style={sectionTitleStyle}>Thông tin cơ bản</Text>
 
-              <View style={styles.inputRow}>
+              <View style={[styles.inputRow, embedded && styles.inputRowEmbedded]}>
                 <View style={[styles.inputGroup, styles.flex2]}>
-                  <Text style={styles.label}>
+                  <Text style={labelStyle}>
                     Tên {productTypes.find((t) => t.value === type)?.label}{" "}
                     <Text style={styles.required}>*</Text>
                   </Text>
                   <TextInput
-                    style={styles.input}
+                    style={inputStyle}
                     placeholder={
                       type === ProductType.SERVICE
                         ? "VD: Giặt hấp vest"
@@ -621,11 +818,11 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
                 </View>
 
                 <View style={[styles.inputGroup, styles.flex1]}>
-                  <Text style={styles.label}>
+                  <Text style={labelStyle}>
                     Số lượng <Text style={styles.required}>*</Text>
                   </Text>
                   <TextInput
-                    style={styles.input}
+                    style={inputStyle}
                     placeholder="VD: 100"
                     value={stockQuantity}
                     onChangeText={setStockQuantity}
@@ -635,14 +832,14 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
                 </View>
               </View>
 
-              <View style={styles.inputRow}>
+              <View style={[styles.inputRow, embedded && styles.inputRowEmbedded]}>
                 {type !== ProductType.ASSET && (
                   <View style={[styles.inputGroup, styles.flex1]}>
-                    <Text style={styles.label}>
+                    <Text style={labelStyle}>
                       Mã SKU <Text style={styles.required}>*</Text>
                     </Text>
                     <TextInput
-                      style={styles.input}
+                      style={inputStyle}
                       placeholder="VD: SVC-001"
                       value={sku}
                       onChangeText={setSku}
@@ -654,11 +851,11 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
                 )}
 
                 <View style={[styles.inputGroup, styles.flex1]}>
-                  <Text style={styles.label}>
+                  <Text style={labelStyle}>
                     Giá (VNĐ) <Text style={styles.required}>*</Text>
                   </Text>
                   <TextInput
-                    style={styles.input}
+                    style={inputStyle}
                     placeholder="VD: 50.000"
                     value={priceDisplay}
                     onChangeText={handlePriceChange}
@@ -668,11 +865,11 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
                 </View>
               </View>
 
-              <View style={styles.inputRow}>
+              <View style={[styles.inputRow, embedded && styles.inputRowEmbedded]}>
                 <View style={[styles.inputGroup, styles.flex1]}>
-                  <Text style={styles.label}>Đơn vị</Text>
+                  <Text style={labelStyle}>Đơn vị</Text>
                   <TextInput
-                    style={styles.input}
+                    style={inputStyle}
                     placeholder="VD: cái, kg, lít..."
                     value={unit}
                     onChangeText={setUnit}
@@ -682,9 +879,9 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
               </View>
 
               <View style={styles.inputGroup}>
-                <Text style={styles.label}>Mô tả</Text>
+                <Text style={labelStyle}>Mô tả</Text>
                 <TextInput
-                  style={[styles.input, styles.textArea]}
+                  style={[styles.input, embedded && styles.inputEmbedded, styles.textArea]}
                   placeholder="VD: Giặt hấp vest"
                   value={description}
                   onChangeText={setDescription}
@@ -740,8 +937,8 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
 
             {/* Service Selection - Only for ASSET type */}
             {type === ProductType.ASSET && (
-              <View style={styles.section}>
-                <Text style={styles.sectionTitle}>
+              <View style={sectionStyle}>
+                <Text style={sectionTitleStyle}>
                   Chọn dịch vụ <Text style={styles.required}>*</Text>
                 </Text>
                 <TextInput
@@ -814,8 +1011,8 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             )}
 
             {/* Thumbnail Image */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Ảnh đại diện</Text>
+            <View style={sectionStyle}>
+              <Text style={sectionTitleStyle}>Ảnh đại diện</Text>
 
               {thumbnailImage ? (
                 <View style={styles.thumbnailContainer}>
@@ -858,8 +1055,8 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             </View>
 
             {/* Gallery Images */}
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Thư viện ảnh</Text>
+            <View style={sectionStyle}>
+              <Text style={sectionTitleStyle}>Thư viện ảnh</Text>
 
               <View style={styles.galleryGrid}>
                 {existingGalleryUrls.map((url, index) => (
@@ -906,7 +1103,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             </View>
 
             {/* Status */}
-            <View style={styles.section}>
+            <View style={sectionStyle}>
               <View style={styles.switchRow}>
                 <View style={styles.switchInfo}>
                   <Text style={styles.switchLabel}>Trạng thái hoạt động</Text>
@@ -924,7 +1121,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             </View>
 
             {/* Info Note */}
-            <View style={styles.infoBox}>
+            <View style={[styles.infoBox, embedded && styles.infoBoxEmbedded]}>
               <FontAwesome5
                 name="info-circle"
                 size={14}
@@ -942,7 +1139,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             </View>
 
             {isEditMode && onDelete ? (
-              <View style={styles.listingActionSection}>
+              <View style={[styles.listingActionSection, embedded && styles.listingActionSectionEmbedded]}>
                 <TouchableOpacity
                   style={[
                     styles.listingActionButton,
@@ -974,7 +1171,25 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             ) : null}
           </>
         )}
+        </View>
       </ScrollView>
+      )}
+
+      {embedded && showSaveButton && (
+        <View style={styles.embeddedFooter}>
+          <TouchableOpacity
+            style={[styles.embeddedSaveBtn, !canSave && styles.embeddedSaveBtnDisabled]}
+            onPress={handleSave}
+            disabled={!canSave}
+            activeOpacity={canSave ? 0.88 : 1}
+          >
+            <FontAwesome5 name="check" size={15} color="#FFFFFF" />
+            <Text style={styles.embeddedSaveBtnText}>
+              {isEditMode ? "Lưu thay đổi" : "Lưu"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };
@@ -984,10 +1199,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#F9FAFB",
   },
+  containerEmbedded: {
+    backgroundColor: "#F3F4F6",
+  },
   header: {
     backgroundColor: "#FFFFFF",
     paddingHorizontal: 16,
-    paddingTop: 32,
+    paddingTop: 40,
     paddingBottom: 16,
     flexDirection: "row",
     justifyContent: "space-between",
@@ -1000,10 +1218,31 @@ const styles = StyleSheet.create({
     shadowRadius: 2,
     elevation: 2,
   },
+  headerEmbedded: {
+    paddingTop: STORE_WEB_NAV_HEIGHT + 6,
+    paddingBottom: 8,
+    paddingHorizontal: 12,
+    flexShrink: 0,
+    zIndex: 20,
+    backgroundColor: "#FFFFFF",
+  },
   headerLeft: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     gap: 12,
+    flex: 1,
+    minWidth: 0,
+  },
+  headerTextBlock: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  headerSubtitle: {
+    fontSize: 12,
+    color: "#6B7280",
+    lineHeight: 16,
+    marginTop: 2,
   },
   backButton: {
     width: 32,
@@ -1012,21 +1251,99 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
+  backButtonEmbedded: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "#F3F4F6",
+  },
   headerTitle: {
     fontSize: 18,
     fontWeight: "bold",
     color: "#1F2937",
+  },
+  headerTitleEmbedded: {
+    fontSize: 15,
+    flexShrink: 1,
+  },
+  saveButtonWrap: {
+    flexShrink: 0,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "#EFF6FF",
+    marginLeft: 8,
   },
   saveButton: {
     fontSize: 16,
     fontWeight: "bold",
     color: "#2563EB",
   },
+  saveButtonWrapDisabled: {
+    backgroundColor: "#F3F4F6",
+    opacity: 0.85,
+  },
+  saveButtonDisabled: {
+    color: "#9CA3AF",
+  },
+  embeddedFooter: {
+    flexShrink: 0,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 10,
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E7EB",
+    ...Platform.select({
+      web: {
+        boxShadow: "0 -4px 16px rgba(0,0,0,0.06)",
+      },
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: -2 },
+        shadowOpacity: 0.06,
+        shadowRadius: 8,
+        elevation: 8,
+      },
+    }),
+  },
+  embeddedSaveBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#2563EB",
+    borderRadius: 10,
+    paddingVertical: 14,
+  },
+  embeddedSaveBtnDisabled: {
+    backgroundColor: "#93C5FD",
+    opacity: 0.65,
+  },
+  embeddedSaveBtnText: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "700",
+  },
   content: {
     flex: 1,
+    minHeight: 0,
   },
   scrollContent: {
     paddingBottom: 32,
+  },
+  scrollContentEmbedded: {
+    paddingBottom: 20,
+  },
+  scrollContentWithFooter: {
+    paddingBottom: 88,
+  },
+  webPanelBody: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 4,
+    gap: 12,
+    maxWidth: "100%",
   },
   modeRow: {
     flexDirection: "row",
@@ -1060,6 +1377,26 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderColor: "#E5E7EB",
   },
+  sectionEmbedded: {
+    backgroundColor: "#FFFFFF",
+    marginTop: 0,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    ...Platform.select({
+      web: {
+        boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.04)",
+      },
+      default: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 2,
+        elevation: 1,
+      },
+    }),
+  },
   sectionTitle: {
     fontSize: 14,
     fontWeight: "bold",
@@ -1067,6 +1404,14 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textTransform: "uppercase",
     letterSpacing: 0.5,
+  },
+  sectionTitleEmbedded: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#6B7280",
+    marginBottom: 12,
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
   },
   inputGroup: {
     marginBottom: 16,
@@ -1100,9 +1445,36 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#1F2937",
   },
+  inputEmbedded: {
+    backgroundColor: "#FFFFFF",
+    borderColor: "#D1D5DB",
+    borderRadius: 8,
+    paddingVertical: 11,
+    fontSize: 14,
+    ...Platform.select({
+      web: {
+        outlineStyle: "none",
+      } as object,
+      default: {},
+    }),
+  },
+  labelEmbedded: {
+    fontSize: 13,
+    color: "#374151",
+    marginBottom: 6,
+  },
+  inputRowEmbedded: {
+    flexDirection: "column",
+    gap: 0,
+  },
   typeGrid: {
     flexDirection: "row",
     gap: 6,
+  },
+  typeGridEmbedded: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   typeOption: {
     flex: 1,
@@ -1114,6 +1486,20 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     padding: 4,
+  },
+  typeOptionEmbedded: {
+    flex: 0,
+    flexGrow: 1,
+    flexBasis: "30%",
+    aspectRatio: undefined,
+    minHeight: 44,
+    flexDirection: "row",
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+  typeOptionEmbeddedActive: {
+    backgroundColor: "#EFF6FF",
   },
   typeOptionActive: {
     backgroundColor: "#FFFFFF",
@@ -1127,6 +1513,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: "600",
     textAlign: "center",
+  },
+  typeLabelEmbedded: {
+    fontSize: 11,
+    marginTop: 4,
   },
   textArea: {
     height: 80,
@@ -1271,6 +1661,10 @@ const styles = StyleSheet.create({
     margin: 16,
     marginBottom: 16,
   },
+  infoBoxEmbedded: {
+    margin: 0,
+    marginBottom: 0,
+  },
   infoText: {
     flex: 1,
     fontSize: 12,
@@ -1281,6 +1675,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 40,
     marginTop: 8,
+  },
+  listingActionSectionEmbedded: {
+    paddingHorizontal: 0,
+    paddingBottom: 8,
+    marginTop: 0,
   },
   listingActionButton: {
     flexDirection: "row",

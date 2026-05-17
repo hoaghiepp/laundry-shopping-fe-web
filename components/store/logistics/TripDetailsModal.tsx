@@ -10,6 +10,7 @@ import {
   StyleSheet,
   Text,
   TouchableOpacity,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { formatDate, getStatusDisplay } from './logisticsUtils';
@@ -51,6 +52,8 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
   onSelfTransport,
 }) => {
   const [orderDataMap, setOrderDataMap] = useState<Map<string, any>>(new Map());
+  const { height: windowHeight } = useWindowDimensions();
+  const bodyMaxHeight = Math.min(windowHeight * 0.55, 520);
   
   // console.log('Tracking ID to Order Code:', trackingIdToOrderCode);
   // console.log('Tracking ID to Barcode:', trackingIdToBarcode);
@@ -213,32 +216,59 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
 
   const totalServiceQuantity = calculateTotalServiceQuantity();
 
+  const showOutboundActions =
+    tripDetails &&
+    tripDetails.status !== LogisticTripStatus.COMPLETED &&
+    (tripDetails.source_store_id === storeId ||
+      tripDetails.source_store_id === factoryId) &&
+    tripDetails.status !== LogisticTripStatus.IN_TRANSIT;
+
+  const showScanInboundAction =
+    tripDetails &&
+    tripDetails.status !== LogisticTripStatus.COMPLETED &&
+    !showOutboundActions &&
+    !!onScanInbound;
+
   return (
     <Modal
       visible={visible}
-      animationType="slide"
-      transparent={true}
+      animationType="fade"
+      transparent
       onRequestClose={onClose}
     >
-      <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+      <TouchableOpacity
+        style={styles.modalOverlay}
+        activeOpacity={1}
+        onPress={onClose}
+      >
+        <View
+          style={styles.modalContent}
+          onStartShouldSetResponder={() => true}
+        >
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Chi tiết chuyến đi</Text>
+            <TouchableOpacity
+              onPress={onClose}
+              style={styles.modalCloseButton}
+              activeOpacity={0.7}
+            >
+              <FontAwesome5 name="times" size={18} color="#6B7280" />
+            </TouchableOpacity>
+          </View>
+
           {loading ? (
             <View style={styles.modalLoadingContainer}>
               <ActivityIndicator size="large" color="#2563EB" />
               <Text style={styles.modalLoadingText}>Đang tải thông tin...</Text>
             </View>
           ) : tripDetails ? (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Chi tiết chuyến đi</Text>
-                <TouchableOpacity
-                  onPress={onClose}
-                  style={styles.modalCloseButton}
-                >
-                  <FontAwesome5 name="times" size={20} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-
+            <>
+              <ScrollView
+                style={[styles.modalBody, { maxHeight: bodyMaxHeight }]}
+                contentContainerStyle={styles.modalBodyContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
               <View style={styles.modalSection}>
                 <Text style={styles.modalSectionTitle}>Thông tin chuyến</Text>
                 <View style={styles.modalInfoRow}>
@@ -342,18 +372,18 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                   <Text style={styles.modalEmptyText}>Chưa có hàng hóa</Text>
                 )}
               </View>
+              </ScrollView>
 
-              {/* Action Button: Call Vehicle or Scan Inbound */}
-              {tripDetails.status !== LogisticTripStatus.COMPLETED && (
-                <View style={styles.modalSection}>
-                  {((tripDetails.source_store_id === storeId || tripDetails.source_store_id === factoryId) && tripDetails.status !== LogisticTripStatus.IN_TRANSIT) ? (
+              {(showOutboundActions || showScanInboundAction) && (
+                <View style={styles.modalFooter}>
+                  {showOutboundActions ? (
                     <View style={styles.actionRow}>
                       <TouchableOpacity
                         style={[styles.scanInboundButton, styles.actionButton]}
                         onPress={handleCallVehicle}
                         activeOpacity={0.8}
                       >
-                        <FontAwesome5 name="car" size={18} color="#FFFFFF" />
+                        <FontAwesome5 name="car" size={16} color="#FFFFFF" />
                         <Text style={styles.scanInboundButtonText}>Gọi xe ngay</Text>
                       </TouchableOpacity>
 
@@ -362,33 +392,41 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                         onPress={handleSelfTransport}
                         activeOpacity={0.8}
                       >
-                        <FontAwesome5 name="walking" size={18} color="#2563EB" />
+                        <FontAwesome5 name="walking" size={16} color="#2563EB" />
                         <Text style={styles.selfTransportButtonText}>Tự vận chuyển</Text>
                       </TouchableOpacity>
                     </View>
-                  ) : onScanInbound ? (
+                  ) : (
                     <TouchableOpacity
                       style={styles.scanInboundButton}
                       onPress={() => {
-                        if (tripDetails.id && tripDetails.trip_code && tripDetails.source_store_id) {
-                          onScanInbound(tripDetails.id, tripDetails.trip_code, tripDetails.source_store_id);
+                        if (
+                          tripDetails.id &&
+                          tripDetails.trip_code &&
+                          tripDetails.source_store_id
+                        ) {
+                          onScanInbound!(
+                            tripDetails.id,
+                            tripDetails.trip_code,
+                            tripDetails.source_store_id
+                          );
                           onClose();
                         }
                       }}
                       activeOpacity={0.8}
                     >
-                      <FontAwesome5 name="qrcode" size={18} color="#FFFFFF" />
+                      <FontAwesome5 name="qrcode" size={16} color="#FFFFFF" />
                       <Text style={styles.scanInboundButtonText}>
-                        {isInbound ? 'Quét QR nhận hàng' : 'Quét mã nhận hàng'}
+                        {isInbound ? "Quét QR nhận hàng" : "Quét mã nhận hàng"}
                       </Text>
                     </TouchableOpacity>
-                  ) : null}
+                  )}
                 </View>
               )}
-            </ScrollView>
+            </>
           ) : null}
         </View>
-      </View>
+      </TouchableOpacity>
     </Modal>
   );
 };
@@ -396,35 +434,56 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
 const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'flex-end',
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
   },
   modalContent: {
-    backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '90%',
-    paddingBottom: 20,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    width: "100%",
+    maxWidth: 520,
+    maxHeight: "85%",
+    overflow: "hidden",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 12,
   },
   modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: "#F3F4F6",
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontWeight: "700",
+    color: "#1F2937",
   },
   modalCloseButton: {
     padding: 4,
   },
+  modalBody: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  modalBodyContent: {
+    paddingBottom: 4,
+  },
+  modalFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: "#F3F4F6",
+    gap: 12,
+  },
   modalLoadingContainer: {
-    padding: 40,
-    alignItems: 'center',
+    padding: 48,
+    alignItems: "center",
   },
   modalLoadingText: {
     marginTop: 12,
@@ -432,9 +491,10 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
   modalSection: {
-    padding: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: "#F3F4F6",
   },
   modalSectionTitle: {
     fontSize: 16,

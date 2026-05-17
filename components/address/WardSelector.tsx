@@ -8,6 +8,7 @@ interface WardSelectorProps {
   wardName?: string; // For name-based matching when editing
   onSelect: (wardId: string | number, wardName: string) => void;
   error?: string;
+  compact?: boolean;
 }
 
 export const WardSelector: React.FC<WardSelectorProps> = ({
@@ -16,6 +17,7 @@ export const WardSelector: React.FC<WardSelectorProps> = ({
   wardName,
   onSelect,
   error,
+  compact = false,
 }) => {
   const [wards, setWards] = useState<SelectOption[]>([]);
   const [loading, setLoading] = useState(false);
@@ -108,6 +110,7 @@ export const WardSelector: React.FC<WardSelectorProps> = ({
       error={error}
       loading={loading}
       disabled={!districtId}
+      compact={compact}
     />
   );
 };

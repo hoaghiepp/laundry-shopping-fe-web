@@ -2,38 +2,39 @@ import { ChangePasswordScreen } from "@/components/auth";
 import { PromotionScreen } from "@/components/factory-screens";
 import { isOnlyGoodsOrder } from "@/components/orders";
 import {
-  AddInventoryScreen,
-  CustomerDetailScreen,
-  CustomerListScreen,
-  InventoryScreen,
-  LogisticsScreen,
-  OrdersScreen,
-  ProcessDetailScreen,
-  QRScannerScreen,
-  ReportScreen,
-  StaffListScreen,
-  StaffOrderScreen,
-  StaffRegistrationScreen,
-  StoreManagementScreen,
-  StoreProfileScreen,
+    AddInventoryScreen,
+    CustomerDetailScreen,
+    CustomerListScreen,
+    InventoryScreen,
+    LogisticsScreen,
+    OrdersScreen,
+    ProcessDetailScreen,
+    QRScannerScreen,
+    ReportScreen,
+    StaffListScreen,
+    StaffOrderScreen,
+    StaffRegistrationScreen,
+    StoreManagementScreen,
+    StoreProfileScreen,
 } from "@/components/screens/store";
 import {
-  StoreBottomNav,
-  StoreHeader,
-  StoreSelectorModal,
-  StoreWebNavBar,
+    StoreBottomNav,
+    StoreHeader,
+    StoreSelectorModal,
+    StoreWebNavBar,
 } from "@/components/store";
 import {
-  GoodsOrderItemStatus,
-  OrderStatus,
-  PackageProductStatus,
-  ProductStatus,
-  ProductType,
-  ServiceOrderItemStatus,
-  StoreTabType,
-  StoreType,
+    GoodsOrderItemStatus,
+    OrderStatus,
+    PackageProductStatus,
+    ProductStatus,
+    ProductType,
+    ServiceOrderItemStatus,
+    StoreTabType,
+    StoreType,
 } from "@/constants/enum";
 import { compatAlert } from "@/lib/compatAlert";
+import { ensureCustomerOrderTokensFromStorage } from "@/lib/customerOrderSession";
 import { ensureSessionFromStoredTokens } from "@/lib/sessionHydrate";
 import { getLastSelectedStoreId, saveLastSelectedStoreId } from "@/lib/storeSelection";
 import { staffService } from "@/services/api";
@@ -47,15 +48,15 @@ import { StoreListItem, storeService } from "@/services/api/storeService";
 import { isAdmin, isSuperAdmin } from "@/utils/globalState";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
-  Animated,
-  BackHandler,
-  Easing,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  useWindowDimensions,
-  View,
+    Animated,
+    BackHandler,
+    Easing,
+    Modal,
+    Platform,
+    Pressable,
+    StyleSheet,
+    useWindowDimensions,
+    View,
 } from "react-native";
 
 type ScreenType =
@@ -94,7 +95,8 @@ export default function StoreHomeScreen() {
 
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   /** Side panel width (process detail + inventory editor share this). */
-  const sidePanelW = Math.min(560, Math.max(300, Math.floor(windowWidth * 0.44)));
+  /** Right column (order detail, inventory editor) — ~20% wider than previous cap. */
+  const sidePanelW = Math.min(672, Math.max(360, Math.floor(windowWidth * 0.528)));
   /** Animated width for inventory add/edit panel (smooth resize of main + panel). */
   const inventoryPanelAnimW = useRef(new Animated.Value(0)).current;
 
@@ -238,6 +240,7 @@ export default function StoreHomeScreen() {
   const fetchStores = async () => {
     try {
       await ensureSessionFromStoredTokens();
+      await ensureCustomerOrderTokensFromStorage();
       let response;
       if (isSuperAdmin()) {
         response = await storeService.searchStore(
@@ -591,7 +594,11 @@ export default function StoreHomeScreen() {
   const isWaitingReturn = selectedOrder ? isOrderWaitingReturn(selectedOrder) : false;
 
   const dialogMaxHeight = Math.min(720, Math.floor(windowHeight * 0.88));
-  const createOrderDialogMaxWidth = Math.min(720, Math.max(320, windowWidth - 32));
+  const createOrderDialogHeight = Math.min(900, Math.floor(windowHeight * 0.92));
+  const createOrderDialogMaxWidth = Math.min(
+    1100,
+    Math.max(480, Math.floor(windowWidth * 0.92))
+  );
 
   return (
     <View style={styles.container}>
@@ -683,6 +690,7 @@ export default function StoreHomeScreen() {
             <View style={{ width: sidePanelW, flex: 1 }}>
               <AddInventoryScreen
                 key={editingProduct?.id ?? editingPackage?.id ?? "new"}
+                embedded={Platform.OS === "web"}
                 onBack={handleBackToInventory}
                 onDelete={
                   editingProduct || editingPackage ? handleDeleteInventory : undefined
@@ -764,7 +772,8 @@ export default function StoreHomeScreen() {
             <View
               style={[
                 styles.dialogPanel,
-                { height: dialogMaxHeight, maxWidth: createOrderDialogMaxWidth },
+                styles.createOrderDialogPanel,
+                { height: createOrderDialogHeight, maxWidth: createOrderDialogMaxWidth },
               ]}
             >
               <StaffOrderScreen
@@ -848,6 +857,9 @@ const styles = StyleSheet.create({
         elevation: 16,
       },
     }),
+  },
+  createOrderDialogPanel: {
+    maxWidth: 1100,
   },
   mainSplit: {
     flex: 1,

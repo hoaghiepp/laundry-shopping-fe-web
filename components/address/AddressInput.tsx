@@ -7,18 +7,27 @@ interface AddressInputProps extends TextInputProps {
   label: string;
   error?: string;
   multiline?: boolean;
+  compact?: boolean;
 }
 
 export const AddressInput: React.FC<AddressInputProps> = ({
   label,
   error,
   multiline = false,
+  compact = false,
   ...props
 }) => {
   return (
-    <Box style={styles.container}>
-      <UIText style={styles.label}>{label}</UIText>
-      <View style={[styles.inputContainer, !multiline && styles.inputContainerSingleLine, error && styles.inputError]}>
+    <Box style={[styles.container, compact && styles.containerCompact]}>
+      <UIText style={[styles.label, compact && styles.labelCompact]}>{label}</UIText>
+      <View
+        style={[
+          styles.inputContainer,
+          compact && styles.inputContainerCompact,
+          !multiline && (compact ? styles.inputContainerSingleLineCompact : styles.inputContainerSingleLine),
+          error && styles.inputError,
+        ]}
+      >
         <TextInput
           style={[styles.input, multiline && styles.inputMultiline]}
           placeholderTextColor="#9CA3AF"
@@ -37,11 +46,23 @@ const styles = StyleSheet.create({
   container: {
     marginBottom: 16,
   },
+  containerCompact: {
+    marginBottom: 8,
+  },
   label: {
     fontSize: 12,
     fontWeight: '700',
     color: '#6B7280',
     marginBottom: 4,
+  },
+  labelCompact: {
+    marginBottom: 2,
+  },
+  inputContainerCompact: {
+    minHeight: 40,
+    paddingVertical: 0,
+    paddingHorizontal: 12,
+    borderRadius: 10,
   },
   inputContainer: {
     backgroundColor: '#FFFFFF',
@@ -54,6 +75,11 @@ const styles = StyleSheet.create({
   },
   inputContainerSingleLine: {
     height: 48,
+    paddingVertical: 0,
+    justifyContent: 'center',
+  },
+  inputContainerSingleLineCompact: {
+    height: 40,
     paddingVertical: 0,
     justifyContent: 'center',
   },

@@ -1,5 +1,11 @@
+import { ReportWebLayout } from '@/components/screens/store/report/ReportWebLayout';
+import type {
+  DailyInvStat,
+  ProductStat,
+  ServiceUsageStat,
+  TabType,
+} from '@/components/screens/store/report/reportTypes';
 import { OrderStatus, ProductType } from '@/constants/enum';
-import { storeMainContentPaddingTop } from '@/constants/storeWebLayout';
 import { compatAlert } from '@/lib/compatAlert';
 import { Order, orderService } from '@/services/api/orderService';
 import { productService } from '@/services/api/productService';
@@ -23,43 +29,7 @@ interface ReportScreenProps {
   storeId?: string;
 }
 
-interface ProductStat {
-  productId: string;
-  productName: string;
-  productThumbnailUrl?: string;
-  price: number;
-  importQty: number;
-  exportQty: number;
-  stockQty: number;
-}
-
-type TabType = 'inventory' | 'orders';
 type DatePickerMode = 'from' | 'to' | null;
-
-interface DailyInvStat {
-  dateKey: string; // YYYY-MM-DD
-  label: string; // dd/MM/yyyy
-  importQty: number;
-  exportQty: number;
-  totalQty: number;
-  products: Array<{
-    productId: string;
-    productName: string;
-    productThumbnailUrl?: string;
-    price: number;
-    importQty: number;
-    exportQty: number;
-    totalQty: number;
-  }>;
-}
-
-interface ServiceUsageStat {
-  productId: string;
-  productName: string;
-  productThumbnailUrl?: string;
-  totalQuantity: number;
-  totalIncome: number;
-}
 
 export const ReportScreen: React.FC<ReportScreenProps> = ({ storeId }) => {
   const [tab, setTab] = useState<TabType>('inventory');
@@ -86,6 +56,8 @@ export const ReportScreen: React.FC<ReportScreenProps> = ({ storeId }) => {
   const [processingOrdersCount, setProcessingOrdersCount] = useState(0);
   const [completedOrdersCount, setCompletedOrdersCount] = useState(0);
   const [serviceUsage, setServiceUsage] = useState<ServiceUsageStat[]>([]);
+  const [reportOrders, setReportOrders] = useState<Order[]>([]);
+  const [storeName, setStoreName] = useState('');
 
   const formatDate = (date: Date) =>
     date.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -379,9 +351,12 @@ export const ReportScreen: React.FC<ReportScreenProps> = ({ storeId }) => {
   );
 
   const fetchOrderStats = useCallback(async () => {
-    if (!storeId) return;
-    try {
-      setOrdersLoading(true);
+      if (!storeId) {
+        setReportOrders([]);
+        return;
+      }
+      try {
+        setOrdersLoading(true);
       const from = new Date(fromDate);
       from.setHours(0, 0, 0, 0);
       const to = new Date(toDate);
@@ -397,6 +372,7 @@ export const ReportScreen: React.FC<ReportScreenProps> = ({ storeId }) => {
         { page: 0, size: 1000 }
       );
       const orders: Order[] = response.data || [];
+      setReportOrders(orders);
       setTotalOrders(orders.length);
       const serviceRevenue = orders.reduce((sum, o) => {
         const items = o.order_items || [];
@@ -465,11 +441,23 @@ export const ReportScreen: React.FC<ReportScreenProps> = ({ storeId }) => {
         setServiceUsage(usage);
       }
     } catch (e: any) {
+      setReportOrders([]);
       compatAlert('Lỗi', e.message || 'Không thể tải thống kê đơn hàng');
     } finally {
       setOrdersLoading(false);
     }
   }, [storeId, fromDate, toDate]);
+
+  useEffect(() => {
+    if (!storeId) {
+      setStoreName('');
+      return;
+    }
+    storeService
+      .getStoreProfile(storeId)
+      .then((res) => setStoreName(res?.data?.name ?? ''))
+      .catch(() => setStoreName(''));
+  }, [storeId]);
 
   useEffect(() => {
     if (tab === 'inventory') {
@@ -493,14 +481,44 @@ export const ReportScreen: React.FC<ReportScreenProps> = ({ storeId }) => {
 
   const isLoading = tab === 'inventory' ? invLoading : ordersLoading;
 
+  if (Platform.OS === 'web') {
+    return (
+      <ReportWebLayout
+        tab={tab}
+        setTab={setTab}
+        fromDate={fromDate}
+        toDate={toDate}
+        setFromDate={setFromDate}
+        setToDate={setToDate}
+        isSameDay={isSameDay(fromDate, toDate)}
+        invLoading={invLoading}
+        ordersLoading={ordersLoading}
+        productStats={productStats}
+        dailyInvStats={dailyInvStats}
+        expandedDays={expandedDays}
+        setExpandedDays={setExpandedDays}
+        totalImport={totalImport}
+        totalExport={totalExport}
+        totalImportValue={totalImportValue}
+        totalExportValue={totalExportValue}
+        totalInventoryValue={totalInventoryValue}
+        totalOrders={totalOrders}
+        totalRevenue={totalRevenue}
+        newOrdersCount={newOrdersCount}
+        processingOrdersCount={processingOrdersCount}
+        completedOrdersCount={completedOrdersCount}
+        serviceUsage={serviceUsage}
+        reportOrders={reportOrders}
+        storeName={storeName}
+      />
+    );
+  }
+
   return (
     <View style={styles.container}>
       <LinearGradient
         colors={['#1e40af', '#1e40af']}
-        style={[
-          styles.header,
-          Platform.OS === 'web' && { paddingTop: storeMainContentPaddingTop() },
-        ]}
+        style={styles.header}
       >
         <View style={styles.headerTop}>
           <Text style={styles.headerTitle}>Báo cáo</Text>

@@ -502,20 +502,13 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
         console.log('Shipment created:', shipmentResponse);
 
         try {
-          // Update trip status
           await logisticService.updateStatusTrips(tripId, LogisticTripStatus.IN_TRANSIT);
-          Alert.alert('Thành công', 'Đã gọi xe và chuyến đi đang được vận chuyển', [
-            {
-              text: 'OK',
-              onPress: () => {
-                // Refresh outbound trips
-                if (activeTab === 'out') {
-                  fetchOutboundTrips();
-                }
-                handleCloseCarrierDialog();
-              },
-            },
-          ]);
+          handleCloseCarrierDialog();
+          handleCloseModal();
+          if (activeTab === 'out') {
+            fetchOutboundTrips();
+          }
+          Alert.alert('Thành công', 'Đã gọi xe và chuyến đi đang được vận chuyển');
         } catch (error: any) {
           console.error('Failed to update trip status:', error);
           Alert.alert('Lỗi', error.message || 'Không thể cập nhật trạng thái chuyến đi');
@@ -617,15 +610,9 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
             ? async (tripId: string, tripCode: string) => {
                 try {
                   await logisticService.updateStatusTrips(tripId, LogisticTripStatus.IN_TRANSIT);
-                  Alert.alert('Thành công', 'Đã chuyển trạng thái sang đang vận chuyển', [
-                    {
-                      text: 'OK',
-                      onPress: () => {
-                        handleCloseModal();
-                        fetchOutboundTrips();
-                      },
-                    },
-                  ]);
+                  handleCloseModal();
+                  fetchOutboundTrips();
+                  Alert.alert('Thành công', 'Đã chuyển trạng thái sang đang vận chuyển');
                 } catch (error: any) {
                   console.error('Failed to update trip status:', error);
                   Alert.alert('Lỗi', error?.message || 'Không thể cập nhật trạng thái chuyến đi');

@@ -7,6 +7,7 @@ interface CitySelectorProps {
   cityName?: string; // For name-based matching when editing
   onSelect: (cityId: string | number, cityName: string) => void;
   error?: string;
+  compact?: boolean;
 }
 
 export const CitySelector: React.FC<CitySelectorProps> = ({
@@ -14,6 +15,7 @@ export const CitySelector: React.FC<CitySelectorProps> = ({
   cityName,
   onSelect,
   error,
+  compact = false,
 }) => {
   const [locationsSnap, setLocationsSnap] = useState(getGoshipLocationsSnapshot());
   const [resolvedValue, setResolvedValue] = useState<string | number | null>(value || null);
@@ -71,6 +73,7 @@ export const CitySelector: React.FC<CitySelectorProps> = ({
       onSelect={handleSelect}
       error={error}
       loading={loading}
+      compact={compact}
     />
   );
 };

@@ -15,10 +15,12 @@ import { AddressLocation, goshipService } from "@/services/api/goshipService";
 import { Order, orderService } from "@/services/api/orderService";
 import { storeService } from "@/services/api/storeService";
 import { formatCurrencyVND } from "@/utils/format";
-import { buildOrderReceiptPdf, uint8ArrayToBase64 } from "@/utils/orderReceiptPdf";
+import {
+  buildOrderReceiptPdf,
+  resolveOrderReceiptOptions,
+  saveOrDownloadReceiptPdf,
+} from "@/utils/orderReceiptPdf";
 import { FontAwesome5 } from "@expo/vector-icons";
-import * as FileSystem from "expo-file-system/legacy";
-import * as Sharing from "expo-sharing";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -483,45 +485,13 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     }
 
     try {
-      const pdfBytes = await buildOrderReceiptPdf(order);
+      const receiptOptions = await resolveOrderReceiptOptions(storeId);
+      const pdfBytes = await buildOrderReceiptPdf(order, receiptOptions);
       const safeCode = orderCode.replace(/[^\w.-]+/g, "_");
       const fileName = `Bien_nhan_${safeCode}.pdf`;
-
+      await saveOrDownloadReceiptPdf(pdfBytes, fileName);
       if (Platform.OS === "web") {
-        if (typeof document === "undefined" || typeof Blob === "undefined") {
-          throw new Error("Trinh duyet khong ho tro tai PDF");
-        }
-        const blob = new Blob([Uint8Array.from(pdfBytes)], { type: "application/pdf" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = fileName;
-        a.rel = "noopener";
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
         compatAlert("Thành công", `Đã tải file PDF: ${fileName}`);
-        return;
-      }
-
-      const dir = FileSystem.cacheDirectory;
-      if (!dir) {
-        throw new Error("Khong co thu muc cache");
-      }
-      const path = `${dir}${fileName}`;
-      await FileSystem.writeAsStringAsync(path, uint8ArrayToBase64(pdfBytes), {
-        encoding: FileSystem.EncodingType.Base64,
-      });
-
-      const canShare = await Sharing.isAvailableAsync();
-      if (canShare) {
-        await Sharing.shareAsync(path, {
-          mimeType: "application/pdf",
-          dialogTitle: fileName,
-        });
-      } else {
-        compatAlert("Thành công", `Đã lưu PDF:\n${path}`);
       }
     } catch (error: unknown) {
       console.error("Error generating receipt PDF:", error);
@@ -1438,25 +1408,30 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     <View style={styles.weightsRow}>
                       <View style={[styles.weightBox, styles.actualWeightBox]}>
                         <Text style={styles.actualWeightLabel}>KHÁCH BÁO</Text>
-                        <View style={styles.weightInputRow}>
-                          <Text style={styles.weightInput}>
-                            {String(item.quantity ?? "-")}
-                          </Text>
-                          <Text style={styles.weightUnit}>
-                            {item.unit || "kg"}
-                          </Text>
+                        <View style={styles.weightStepper}>
+                          <View style={styles.weightStepBtnSpacer} />
+                          <View style={styles.weightStepperCenter}>
+                            <Text style={styles.weightStepValue}>
+                              {String(item.quantity ?? "-")}
+                            </Text>
+                            <Text style={styles.weightUnit}>
+                              {item.unit || "kg"}
+                            </Text>
+                          </View>
+                          <View style={styles.weightStepBtnSpacer} />
                         </View>
                       </View>
                       <View style={[styles.weightBox, styles.actualWeightBox]}>
                         <Text style={styles.actualWeightLabel}>THỰC TẾ</Text>
-                        <View style={styles.weightInputRow}>
-                          {orderInfo?.status === OrderStatus.CREATED && !isChangesConfirmed && (
+                        <View style={styles.weightStepper}>
+                          {orderInfo?.status === OrderStatus.CREATED &&
+                          !isChangesConfirmed ? (
                             <TouchableOpacity
-                              style={styles.weightStepButtonContainer}
+                              style={styles.weightStepBtn}
                               onPress={() =>
                                 changeActualBy(item.id ?? String(idx), -0.5)
                               }
-                              activeOpacity={1}
+                              activeOpacity={0.7}
                             >
                               <FontAwesome5
                                 name="minus"
@@ -1464,27 +1439,36 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                                 color="#6B7280"
                               />
                             </TouchableOpacity>
+                          ) : (
+                            <View style={styles.weightStepBtnSpacer} />
                           )}
 
-                          <TextInput
-                            style={styles.weightInput}
-                            value={
-                              actualWeights[item.id ?? String(idx)] ??
-                              String(
-                                item.adjust_quantity ?? item.quantity ?? ""
-                              )
-                            }
-                            onChangeText={(text) =>
-                              setActualWeightFor(item.id ?? String(idx), text)
-                            }
-                            keyboardType="decimal-pad"
-                            placeholder="0"
-                            editable={orderInfo?.status === OrderStatus.CREATED && !isChangesConfirmed}
-                          />
+                          <View style={styles.weightStepperCenter}>
+                            <TextInput
+                              style={styles.weightStepInput}
+                              value={
+                                actualWeights[item.id ?? String(idx)] ??
+                                String(
+                                  item.adjust_quantity ?? item.quantity ?? ""
+                                )
+                              }
+                              onChangeText={(text) =>
+                                setActualWeightFor(item.id ?? String(idx), text)
+                              }
+                              keyboardType="decimal-pad"
+                              placeholder="0"
+                              editable={
+                                orderInfo?.status === OrderStatus.CREATED &&
+                                !isChangesConfirmed
+                              }
+                            />
+                            <Text style={styles.weightUnit}>kg</Text>
+                          </View>
 
-                          {orderInfo?.status === OrderStatus.CREATED && !isChangesConfirmed && (
+                          {orderInfo?.status === OrderStatus.CREATED &&
+                          !isChangesConfirmed ? (
                             <TouchableOpacity
-                              style={styles.weightStepButtonContainer}
+                              style={styles.weightStepBtn}
                               onPress={() =>
                                 changeActualBy(item.id ?? String(idx), 0.5)
                               }
@@ -1496,9 +1480,9 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                                 color="#2563EB"
                               />
                             </TouchableOpacity>
+                          ) : (
+                            <View style={styles.weightStepBtnSpacer} />
                           )}
-
-                          <Text style={styles.weightUnit}>kg</Text>
                         </View>
                       </View>
                     </View>
@@ -2386,10 +2370,50 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1F2937",
   },
-  weightInputRow: {
+  weightStepper: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 4,
+    minHeight: 32,
+  },
+  weightStepBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+    flexShrink: 0,
+  },
+  weightStepBtnSpacer: {
+    width: 28,
+    height: 28,
+    flexShrink: 0,
+  },
+  weightStepperCenter: {
+    flex: 1,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 4,
+    minWidth: 0,
+  },
+  weightStepValue: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#1F2937",
+    textAlign: "center",
+  },
+  weightStepInput: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#1E40AF",
+    padding: 0,
+    minWidth: 36,
+    maxWidth: 72,
+    textAlign: "center",
+    textAlignVertical: "center",
   },
   weightInput: {
     fontSize: 18,
@@ -2422,8 +2446,8 @@ const styles = StyleSheet.create({
   weightUnit: {
     fontSize: 12,
     color: "#6B7280",
-    marginLeft: 4,
     fontWeight: "bold",
+    flexShrink: 0,
   },
   servicePriceContainer: {
     marginTop: 8,

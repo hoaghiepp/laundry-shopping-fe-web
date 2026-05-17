@@ -40,6 +40,8 @@ export const StoreManagementScreen: React.FC<StoreManagementScreenProps> = ({
   onClose,
   onStoresChanged,
 }) => {
+  const isWideForm = Platform.OS === "web";
+
   const [stores, setStores] = useState<StoreListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [storeAddresses, setStoreAddresses] = useState<Record<string, string>>({});
@@ -363,171 +365,359 @@ export const StoreManagementScreen: React.FC<StoreManagementScreenProps> = ({
         onRequestClose={closeAddModal}
       >
         <Pressable style={styles.modalOverlay} onPress={closeAddModal}>
-          <Pressable style={styles.modalCard} onPress={() => { }}>
-            <View style={styles.modalHeader}>
+          <Pressable
+            style={[styles.modalCard, isWideForm && styles.modalCardWide]}
+            onPress={() => { }}
+          >
+            <View style={[styles.modalHeader, isWideForm && styles.modalHeaderCompact]}>
               <Text style={styles.modalTitle}>Thêm mới</Text>
               <TouchableOpacity onPress={closeAddModal} style={styles.modalCloseButton}>
                 <FontAwesome5 name="times" size={18} color="#6B7280" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView
-              style={styles.modalBody}
-              contentContainerStyle={styles.modalBodyContent}
-              // keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-            >
-              <View style={styles.sectionDivider}>
-                <View style={styles.sectionDividerLine} />
-                <Text style={styles.sectionDividerText}>Thông tin cửa hàng</Text>
-                <View style={styles.sectionDividerLine} />
-              </View>
+            {isWideForm ? (
+              <View style={styles.modalBodyWide}>
+                <Text style={styles.sectionTitle}>Thông tin cửa hàng</Text>
+                <View style={styles.formRow}>
+                  <View style={styles.formRowItem}>
+                    <View style={styles.compactFieldTight}>
+                      <Text style={styles.compactLabel}>Tên</Text>
+                      <View style={styles.compactInputContainerTight}>
+                        <TextInput
+                          style={styles.compactInput}
+                          placeholder="Tên cửa hàng"
+                          placeholderTextColor="#9CA3AF"
+                          value={name}
+                          onChangeText={setName}
+                        />
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.formRowItem}>
+                    <View style={styles.compactFieldTight}>
+                      <Text style={styles.compactLabel}>Số điện thoại</Text>
+                      <View style={styles.compactInputContainerTight}>
+                        <TextInput
+                          style={styles.compactInput}
+                          placeholder="Số điện thoại"
+                          placeholderTextColor="#9CA3AF"
+                          keyboardType="phone-pad"
+                          value={phone}
+                          onChangeText={setPhone}
+                        />
+                      </View>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.formRow}>
+                  <View style={styles.formRowItem}>
+                    <CitySelector
+                      compact
+                      value={provinceId}
+                      onSelect={(id, label) => {
+                        setProvinceId(id);
+                        setProvinceName(label);
+                        setDistrictId(null);
+                        setDistrictName("");
+                        setWardId(null);
+                        setWardName("");
+                      }}
+                    />
+                  </View>
+                  <View style={styles.formRowItem}>
+                    <DistrictSelector
+                      compact
+                      cityId={provinceId}
+                      value={districtId}
+                      onSelect={(id, label) => {
+                        setDistrictId(id);
+                        setDistrictName(label);
+                        setWardId(null);
+                        setWardName("");
+                      }}
+                    />
+                  </View>
+                </View>
+                <WardSelector
+                  compact
+                  districtId={districtId}
+                  value={wardId}
+                  onSelect={(id, label) => {
+                    setWardId(id);
+                    setWardName(label);
+                  }}
+                />
+                <AddressInput
+                  compact
+                  label="Địa chỉ chi tiết"
+                  placeholder="Số nhà, tên đường..."
+                  value={addressDetail}
+                  onChangeText={setAddressDetail}
+                  multiline={false}
+                />
 
-              <View style={styles.compactField}>
-                <Text style={styles.compactLabel}>Tên</Text>
-                <View style={styles.compactInputContainer}>
-                  <TextInput
-                    style={styles.compactInput}
-                    placeholder="Tên cửa hàng"
-                    placeholderTextColor="#9CA3AF"
-                    value={name}
-                    onChangeText={setName}
-                  />
+                <Text style={[styles.sectionTitle, styles.sectionTitleSpaced]}>Tài khoản quản lý</Text>
+                <View style={styles.compactFieldTight}>
+                  <Text style={styles.compactLabel}>Email</Text>
+                  <View style={styles.compactInputContainerTight}>
+                    <TextInput
+                      style={styles.compactInput}
+                      placeholder="example@email.com"
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={accountEmail}
+                      onChangeText={setAccountEmail}
+                    />
+                  </View>
+                </View>
+                <View style={styles.formRow}>
+                  <View style={styles.formRowItem}>
+                    <View style={styles.compactFieldTight}>
+                      <Text style={styles.compactLabel}>Họ và tên</Text>
+                      <View style={styles.compactInputContainerTight}>
+                        <TextInput
+                          style={styles.compactInput}
+                          placeholder="Họ và tên"
+                          placeholderTextColor="#9CA3AF"
+                          value={accountFullName}
+                          onChangeText={setAccountFullName}
+                        />
+                      </View>
+                    </View>
+                  </View>
+                  <View style={styles.formRowItem}>
+                    <View style={styles.compactFieldTight}>
+                      <Text style={styles.compactLabel}>Số điện thoại</Text>
+                      <View style={styles.compactInputContainerTight}>
+                        <TextInput
+                          style={styles.compactInput}
+                          placeholder="Số điện thoại"
+                          placeholderTextColor="#9CA3AF"
+                          keyboardType="phone-pad"
+                          value={accountPhone}
+                          onChangeText={setAccountPhone}
+                        />
+                      </View>
+                    </View>
+                  </View>
+                </View>
+                <View style={styles.compactFieldTight}>
+                  <Text style={styles.compactLabel}>Mật khẩu</Text>
+                  <View style={[styles.compactInputContainerTight, styles.passwordInputContainer]}>
+                    <TextInput
+                      style={[styles.compactInput, styles.compactInputFlex]}
+                      placeholder="Mật khẩu"
+                      placeholderTextColor="#9CA3AF"
+                      secureTextEntry={!showPassword}
+                      value={accountPassword}
+                      onChangeText={setAccountPassword}
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowPassword((v) => !v)}
+                      style={styles.eyeButton}
+                    >
+                      <FontAwesome5
+                        name={showPassword ? "eye-slash" : "eye"}
+                        size={14}
+                        color="#9CA3AF"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.compactFieldTight}>
+                  <Text style={styles.compactLabel}>Xác nhận mật khẩu</Text>
+                  <View style={[styles.compactInputContainerTight, styles.passwordInputContainer]}>
+                    <TextInput
+                      style={[styles.compactInput, styles.compactInputFlex]}
+                      placeholder="Nhập lại mật khẩu"
+                      placeholderTextColor="#9CA3AF"
+                      secureTextEntry={!showConfirmPassword}
+                      value={accountConfirmPassword}
+                      onChangeText={setAccountConfirmPassword}
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowConfirmPassword((v) => !v)}
+                      style={styles.eyeButton}
+                    >
+                      <FontAwesome5
+                        name={showConfirmPassword ? "eye-slash" : "eye"}
+                        size={14}
+                        color="#9CA3AF"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  {passwordMismatch && (
+                    <Text style={styles.fieldError}>Mật khẩu xác nhận không khớp</Text>
+                  )}
                 </View>
               </View>
-              <View style={styles.compactField}>
-                <Text style={styles.compactLabel}>Số điện thoại</Text>
-                <View style={styles.compactInputContainer}>
-                  <TextInput
-                    style={styles.compactInput}
-                    placeholder="Số điện thoại"
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType="phone-pad"
-                    value={phone}
-                    onChangeText={setPhone}
-                  />
+            ) : (
+              <ScrollView
+                style={styles.modalBody}
+                contentContainerStyle={styles.modalBodyContent}
+                showsVerticalScrollIndicator={false}
+              >
+                <View style={styles.sectionDivider}>
+                  <View style={styles.sectionDividerLine} />
+                  <Text style={styles.sectionDividerText}>Thông tin cửa hàng</Text>
+                  <View style={styles.sectionDividerLine} />
                 </View>
-              </View>
-              <CitySelector
-                value={provinceId}
-                onSelect={(id, label) => {
-                  setProvinceId(id);
-                  setProvinceName(label);
-                  setDistrictId(null);
-                  setDistrictName("");
-                  setWardId(null);
-                  setWardName("");
-                }}
-              />
-              <DistrictSelector
-                cityId={provinceId}
-                value={districtId}
-                onSelect={(id, label) => {
-                  setDistrictId(id);
-                  setDistrictName(label);
-                  setWardId(null);
-                  setWardName("");
-                }}
-              />
-              <WardSelector
-                districtId={districtId}
-                value={wardId}
-                onSelect={(id, label) => {
-                  setWardId(id);
-                  setWardName(label);
-                }}
-              />
-              <AddressInput
-                label="Địa chỉ chi tiết"
-                placeholder="Nhập số nhà, tên đường, tòa nhà..."
-                value={addressDetail}
-                onChangeText={setAddressDetail}
-                multiline={true}
-              />
 
-              <View style={styles.sectionDivider}>
-                <View style={styles.sectionDividerLine} />
-                <Text style={styles.sectionDividerText}>Tài khoản quản lý</Text>
-                <View style={styles.sectionDividerLine} />
-              </View>
+                <View style={styles.compactField}>
+                  <Text style={styles.compactLabel}>Tên</Text>
+                  <View style={styles.compactInputContainer}>
+                    <TextInput
+                      style={styles.compactInput}
+                      placeholder="Tên cửa hàng"
+                      placeholderTextColor="#9CA3AF"
+                      value={name}
+                      onChangeText={setName}
+                    />
+                  </View>
+                </View>
+                <View style={styles.compactField}>
+                  <Text style={styles.compactLabel}>Số điện thoại</Text>
+                  <View style={styles.compactInputContainer}>
+                    <TextInput
+                      style={styles.compactInput}
+                      placeholder="Số điện thoại"
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType="phone-pad"
+                      value={phone}
+                      onChangeText={setPhone}
+                    />
+                  </View>
+                </View>
+                <CitySelector
+                  value={provinceId}
+                  onSelect={(id, label) => {
+                    setProvinceId(id);
+                    setProvinceName(label);
+                    setDistrictId(null);
+                    setDistrictName("");
+                    setWardId(null);
+                    setWardName("");
+                  }}
+                />
+                <DistrictSelector
+                  cityId={provinceId}
+                  value={districtId}
+                  onSelect={(id, label) => {
+                    setDistrictId(id);
+                    setDistrictName(label);
+                    setWardId(null);
+                    setWardName("");
+                  }}
+                />
+                <WardSelector
+                  districtId={districtId}
+                  value={wardId}
+                  onSelect={(id, label) => {
+                    setWardId(id);
+                    setWardName(label);
+                  }}
+                />
+                <AddressInput
+                  label="Địa chỉ chi tiết"
+                  placeholder="Nhập số nhà, tên đường, tòa nhà..."
+                  value={addressDetail}
+                  onChangeText={setAddressDetail}
+                  multiline={true}
+                />
 
-              <View style={styles.compactField}>
-                <Text style={styles.compactLabel}>Email</Text>
-                <View style={styles.compactInputContainer}>
-                  <TextInput
-                    style={styles.compactInput}
-                    placeholder="example@email.com"
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    value={accountEmail}
-                    onChangeText={setAccountEmail}
-                  />
+                <View style={styles.sectionDivider}>
+                  <View style={styles.sectionDividerLine} />
+                  <Text style={styles.sectionDividerText}>Tài khoản quản lý</Text>
+                  <View style={styles.sectionDividerLine} />
                 </View>
-              </View>
-              <View style={styles.compactField}>
-                <Text style={styles.compactLabel}>Họ và tên</Text>
-                <View style={styles.compactInputContainer}>
-                  <TextInput
-                    style={styles.compactInput}
-                    placeholder="Họ và tên"
-                    placeholderTextColor="#9CA3AF"
-                    value={accountFullName}
-                    onChangeText={setAccountFullName}
-                  />
-                </View>
-              </View>
-              <View style={styles.compactField}>
-                <Text style={styles.compactLabel}>Số điện thoại</Text>
-                <View style={styles.compactInputContainer}>
-                  <TextInput
-                    style={styles.compactInput}
-                    placeholder="Số điện thoại"
-                    placeholderTextColor="#9CA3AF"
-                    keyboardType="phone-pad"
-                    value={accountPhone}
-                    onChangeText={setAccountPhone}
-                  />
-                </View>
-              </View>
-              <View style={styles.compactField}>
-                <Text style={styles.compactLabel}>Mật khẩu</Text>
-                <View style={[styles.compactInputContainer, styles.passwordInputContainer]}>
-                  <TextInput
-                    style={[styles.compactInput, { flex: 1 }]}
-                    placeholder="Mật khẩu"
-                    placeholderTextColor="#9CA3AF"
-                    secureTextEntry={!showPassword}
-                    value={accountPassword}
-                    onChangeText={setAccountPassword}
-                  />
-                  <TouchableOpacity onPress={() => setShowPassword((v) => !v)} style={styles.eyeButton}>
-                    <FontAwesome5 name={showPassword ? "eye-slash" : "eye"} size={14} color="#9CA3AF" />
-                  </TouchableOpacity>
-                </View>
-              </View>
-              <View style={styles.compactField}>
-                <Text style={styles.compactLabel}>Xác nhận mật khẩu</Text>
-                <View style={[styles.compactInputContainer, styles.passwordInputContainer]}>
-                  <TextInput
-                    style={[styles.compactInput, { flex: 1 }]}
-                    placeholder="Nhập lại mật khẩu"
-                    placeholderTextColor="#9CA3AF"
-                    secureTextEntry={!showConfirmPassword}
-                    value={accountConfirmPassword}
-                    onChangeText={setAccountConfirmPassword}
-                  />
-                  <TouchableOpacity onPress={() => setShowConfirmPassword((v) => !v)} style={styles.eyeButton}>
-                    <FontAwesome5 name={showConfirmPassword ? "eye-slash" : "eye"} size={14} color="#9CA3AF" />
-                  </TouchableOpacity>
-                </View>
-                {passwordMismatch && (
-                  <Text style={styles.fieldError}>Mật khẩu xác nhận không khớp</Text>
-                )}
-              </View>
-            </ScrollView>
 
-            <View style={styles.modalFooter}>
+                <View style={styles.compactField}>
+                  <Text style={styles.compactLabel}>Email</Text>
+                  <View style={styles.compactInputContainer}>
+                    <TextInput
+                      style={styles.compactInput}
+                      placeholder="example@email.com"
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      value={accountEmail}
+                      onChangeText={setAccountEmail}
+                    />
+                  </View>
+                </View>
+                <View style={styles.compactField}>
+                  <Text style={styles.compactLabel}>Họ và tên</Text>
+                  <View style={styles.compactInputContainer}>
+                    <TextInput
+                      style={styles.compactInput}
+                      placeholder="Họ và tên"
+                      placeholderTextColor="#9CA3AF"
+                      value={accountFullName}
+                      onChangeText={setAccountFullName}
+                    />
+                  </View>
+                </View>
+                <View style={styles.compactField}>
+                  <Text style={styles.compactLabel}>Số điện thoại</Text>
+                  <View style={styles.compactInputContainer}>
+                    <TextInput
+                      style={styles.compactInput}
+                      placeholder="Số điện thoại"
+                      placeholderTextColor="#9CA3AF"
+                      keyboardType="phone-pad"
+                      value={accountPhone}
+                      onChangeText={setAccountPhone}
+                    />
+                  </View>
+                </View>
+                <View style={styles.compactField}>
+                  <Text style={styles.compactLabel}>Mật khẩu</Text>
+                  <View style={[styles.compactInputContainer, styles.passwordInputContainer]}>
+                    <TextInput
+                      style={[styles.compactInput, { flex: 1 }]}
+                      placeholder="Mật khẩu"
+                      placeholderTextColor="#9CA3AF"
+                      secureTextEntry={!showPassword}
+                      value={accountPassword}
+                      onChangeText={setAccountPassword}
+                    />
+                    <TouchableOpacity onPress={() => setShowPassword((v) => !v)} style={styles.eyeButton}>
+                      <FontAwesome5 name={showPassword ? "eye-slash" : "eye"} size={14} color="#9CA3AF" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.compactField}>
+                  <Text style={styles.compactLabel}>Xác nhận mật khẩu</Text>
+                  <View style={[styles.compactInputContainer, styles.passwordInputContainer]}>
+                    <TextInput
+                      style={[styles.compactInput, { flex: 1 }]}
+                      placeholder="Nhập lại mật khẩu"
+                      placeholderTextColor="#9CA3AF"
+                      secureTextEntry={!showConfirmPassword}
+                      value={accountConfirmPassword}
+                      onChangeText={setAccountConfirmPassword}
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowConfirmPassword((v) => !v)}
+                      style={styles.eyeButton}
+                    >
+                      <FontAwesome5
+                        name={showConfirmPassword ? "eye-slash" : "eye"}
+                        size={14}
+                        color="#9CA3AF"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                  {passwordMismatch && (
+                    <Text style={styles.fieldError}>Mật khẩu xác nhận không khớp</Text>
+                  )}
+                </View>
+              </ScrollView>
+            )}
+
+            <View style={[styles.modalFooter, isWideForm && styles.modalFooterCompact]}>
               <TouchableOpacity
                 style={[styles.modalButton, styles.modalCancelButton]}
                 onPress={closeAddModal}
@@ -674,6 +864,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.45)",
     justifyContent: "center",
+    alignItems: "center",
     paddingHorizontal: 16,
   },
   modalCard: {
@@ -681,6 +872,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: "hidden",
     maxHeight: "85%",
+    width: "100%",
+  },
+  modalCardWide: {
+    maxWidth: 480,
+    maxHeight: undefined,
   },
   modalHeader: {
     flexDirection: "row",
@@ -690,6 +886,9 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
+  },
+  modalHeaderCompact: {
+    paddingVertical: 10,
   },
   modalTitle: {
     fontSize: 16,
@@ -711,6 +910,27 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 8,
   },
+  modalBodyWide: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  formRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  formRowItem: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#374151",
+    marginBottom: 8,
+  },
+  sectionTitleSpaced: {
+    marginTop: 4,
+  },
   modalFooter: {
     flexDirection: "row",
     gap: 10,
@@ -718,10 +938,14 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: "#E5E7EB",
   },
+  modalFooterCompact: {
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
   modalButton: {
     flex: 1,
-    height: 44,
-    borderRadius: 12,
+    height: 40,
+    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
   },
@@ -748,11 +972,14 @@ const styles = StyleSheet.create({
   compactField: {
     marginBottom: 12,
   },
+  compactFieldTight: {
+    marginBottom: 6,
+  },
   compactLabel: {
     fontSize: 12,
     fontWeight: "700",
     color: "#6B7280",
-    marginBottom: 6,
+    marginBottom: 4,
   },
   compactInputContainer: {
     backgroundColor: "#FFFFFF",
@@ -764,11 +991,26 @@ const styles = StyleSheet.create({
     height: 48,
     justifyContent: "center",
   },
+  compactInputContainerTight: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 0,
+    height: 40,
+    justifyContent: "center",
+  },
   compactInput: {
     fontSize: 14,
     fontWeight: "600",
     color: "#1F2937",
     paddingVertical: 0,
+    ...(Platform.OS === "web" ? ({ outlineStyle: "none" } as object) : {}),
+  },
+  compactInputFlex: {
+    flex: 1,
+    minWidth: 0,
   },
   passwordInputContainer: {
     flexDirection: "row",

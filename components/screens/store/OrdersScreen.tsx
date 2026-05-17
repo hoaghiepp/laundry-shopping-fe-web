@@ -27,6 +27,12 @@ import {
 } from "@/constants/storeWebLayout";
 import { compatAlert } from "@/lib/compatAlert";
 import {
+  buildCombinedOrderReceiptsPdf,
+  buildOrderReceiptPdf,
+  resolveOrderReceiptOptions,
+  saveOrDownloadReceiptPdf,
+} from "@/utils/orderReceiptPdf";
+import {
     CreateTripsRequest,
     LogisticsTripItem,
     logisticService,
@@ -111,6 +117,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     cancelled: 0,
   });
   const [isCreatingBatch, setIsCreatingBatch] = useState(false);
+  const [isPrintingReceipts, setIsPrintingReceipts] = useState(false);
   const [isCreatingTrip, setIsCreatingTrip] = useState(false);
 
   const tabCacheRef = React.useRef<Map<OrderTab, OrderCardData[]>>(new Map());
@@ -126,19 +133,60 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     const prev = tabCacheRef.current.get(tab) || [];
 
     if (page === 0) {
-      // Refresh: apply server page first (add/update), keep extra pages already loaded below.
-      const incomingIds = new Set(pageItems.map((x) => x.id));
-      const tail = prev.filter((x) => !incomingIds.has(x.id));
-      const merged = [...pageItems, ...tail];
-      tabCacheRef.current.set(tab, merged);
-      return merged;
+      // Refresh: replace tab list so orders that moved to another tab are removed.
+      tabCacheRef.current.set(tab, pageItems);
+      return pageItems;
     }
 
-    // Append behavior (dedupe): keep existing order, append new unique items at the end.
     const existingIds = new Set(prev.map((x) => x.id));
     const appended = [...prev, ...pageItems.filter((x) => !existingIds.has(x.id))];
     tabCacheRef.current.set(tab, appended);
     return appended;
+  };
+
+  /** Apply fetch results to list, orderMap, and selection (prune stale orders on page-0 refresh). */
+  const applyTabOrderResults = (
+    tab: OrderTab,
+    cardDataList: OrderCardData[],
+    filteredOrders: Order[],
+    page: number
+  ) => {
+    const prevTabCards = page === 0 ? tabCacheRef.current.get(tab) || [] : [];
+    const mergedOrders = mergeIntoCache(tab, cardDataList, page);
+    setOrders(mergedOrders);
+
+    setOrderMap((prev) => {
+      const next = new Map(prev);
+      const incomingCodes = new Set(filteredOrders.map((o) => o.code));
+
+      if (page === 0) {
+        const codesInOtherTabs = new Set<string>();
+        tabCacheRef.current.forEach((cards, otherTab) => {
+          if (otherTab !== tab) {
+            cards.forEach((c) => codesInOtherTabs.add(c.id));
+          }
+        });
+        prevTabCards.forEach((card) => {
+          if (!incomingCodes.has(card.id) && !codesInOtherTabs.has(card.id)) {
+            next.delete(card.id);
+          }
+        });
+      }
+
+      filteredOrders.forEach((order) => next.set(order.code, order));
+      return next;
+    });
+
+    if (page === 0) {
+      const visibleIds = new Set(mergedOrders.map((c) => c.id));
+      setSelectedOrders((prev) => {
+        const next = new Set<string>();
+        prev.forEach((id) => {
+          if (visibleIds.has(id)) next.add(id);
+        });
+        return next;
+      });
+    }
   };
 
   // Fetch tracking items (shared function to avoid duplicate calls)
@@ -392,14 +440,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         .filter((card): card is OrderCardData => card !== null);
 
       // Store order objects in a map for easy lookup
-      setOrderMap((prev) => {
-        const merged = new Map(prev);
-        allFilteredOrders.forEach((order) => merged.set(order.code, order));
-        return merged;
-      });
-
-      const mergedCards = mergeIntoCache("waiting_transport", cardDataList, 0);
-      setOrders(mergedCards);
+      applyTabOrderResults("waiting_transport", cardDataList, allFilteredOrders, 0);
     } catch (error) {
       console.error("Failed to fetch tracking items:", error);
       setOrders((prev) => prev);
@@ -628,20 +669,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
           })
           .filter((card): card is OrderCardData => card !== null);
 
-        // Store order objects in a map for easy lookup
-        const newOrderMap = new Map<string, Order>();
-        filteredOrders.forEach((order) => {
-          newOrderMap.set(order.code, order);
-        });
-        // Merge into existing orderMap (pagination)
-        setOrderMap((prev) => {
-          const merged = new Map(prev);
-          filteredOrders.forEach((order) => merged.set(order.code, order));
-          return merged;
-        });
-
-        const mergedOrders = mergeIntoCache(tab, cardDataList, page);
-        setOrders(mergedOrders);
+        applyTabOrderResults(tab, cardDataList, filteredOrders, page);
         setBatches(new Map());
         setBatchTrackingItemIds(new Map());
         tabPageRef.current.set(tab, page);
@@ -972,14 +1000,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         })
         .filter((card): card is OrderCardData => card !== null);
 
-      setOrderMap((prev) => {
-        const merged = new Map(prev);
-        filteredOrders.forEach((order) => merged.set(order.code, order));
-        return merged;
-      });
-
-      const mergedOrders = mergeIntoCache(tab, cardDataList, page);
-      setOrders(mergedOrders);
+      applyTabOrderResults(tab, cardDataList, filteredOrders, page);
       setBatches(new Map()); // Clear batches for other tabs
       setBatchTrackingItemIds(new Map()); // Clear batch tracking item IDs for other tabs
       tabPageRef.current.set(tab, page);
@@ -1346,7 +1367,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     }
   }, [activeTab]);
 
-  // Refresh when refreshKey changes (e.g., when closing process detail) — merge into list, no cache wipe
+  // Refresh when refreshKey changes (e.g., after process detail) — re-fetch page 0 and drop orders that left this tab
   useEffect(() => {
     if (storeId && refreshKey !== undefined && refreshKey > 0) {
       if (activeTab === "waiting_transport") {
@@ -1396,15 +1417,66 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   };
 
   // Get count of selected orders excluding batch orders
-  const getSelectedOrdersCount = () => {
+  const getSelectedOrderCodes = (): string[] => {
     if (activeTab !== "waiting_transport" || batches.size === 0) {
-      return selectedOrders.size;
+      return Array.from(selectedOrders);
     }
-    // Exclude orders that are in batches
     const allBatchOrderCodes = Array.from(batches.values()).flat();
     return Array.from(selectedOrders).filter(
       (code) => !allBatchOrderCodes.includes(code)
-    ).length;
+    );
+  };
+
+  const getSelectedOrdersCount = () => getSelectedOrderCodes().length;
+
+  const printReceiptsForOrders = async (orderCodes: string[]) => {
+    if (orderCodes.length === 0) return;
+
+    const orders: Order[] = [];
+    for (const code of orderCodes) {
+      const order = orderMap.get(code);
+      if (order?.code) orders.push(order);
+    }
+
+    if (orders.length === 0) {
+      compatAlert("Lỗi", "Không tìm thấy thông tin đơn hàng để in");
+      return;
+    }
+
+    setIsPrintingReceipts(true);
+    try {
+      const receiptOptions = await resolveOrderReceiptOptions(storeId);
+      const pdfBytes =
+        orders.length === 1
+          ? await buildOrderReceiptPdf(orders[0], receiptOptions)
+          : await buildCombinedOrderReceiptsPdf(orders, receiptOptions);
+
+      const fileName =
+        orders.length === 1
+          ? `Bien_nhan_${orders[0].code!.replace(/[^\w.-]+/g, "_")}.pdf`
+          : `Bien_nhan_${orders.length}_don.pdf`;
+
+      await saveOrDownloadReceiptPdf(pdfBytes, fileName);
+      compatAlert(
+        "Thành công",
+        orders.length === 1
+          ? `Đã tạo biên nhận: ${fileName}`
+          : `Đã gộp ${orders.length} biên nhận vào file: ${fileName}`
+      );
+    } catch (error: unknown) {
+      console.error("Error printing receipts:", error);
+      const msg =
+        error instanceof Error
+          ? error.message
+          : "Không thể tạo file PDF. Vui lòng thử lại.";
+      compatAlert("Lỗi", msg);
+    } finally {
+      setIsPrintingReceipts(false);
+    }
+  };
+
+  const handlePrintSelectedReceipts = () => {
+    void printReceiptsForOrders(getSelectedOrderCodes());
   };
 
   const handleCreateBatchShipment = async () => {
@@ -1456,11 +1528,6 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       }
       return newSet;
     });
-  };
-
-  const handlePrintOrderCode = (orderId: string) => {
-    compatAlert("In mã đơn", `In mã đơn cho đơn hàng: ${orderId}`);
-    // TODO: Implement print functionality
   };
 
   const handleGroupCheckbox = (groupId: string, checked: boolean) => {
@@ -1742,7 +1809,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                         }}
                         onToggleExpand={() => handleGroupToggle(barcode)}
                         onOrderPress={onOrderPress}
-                        onPrintOrderCode={handlePrintOrderCode}
+                        onPrintOrders={(codes) => void printReceiptsForOrders(codes)}
                       />
                     )
                   )}
@@ -1794,15 +1861,14 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                     </View>
                     <TouchableOpacity
                       style={styles.printButton}
-                      onPress={() => {
-                        Array.from(groupedOrders).forEach((id) =>
-                          handlePrintOrderCode(id)
-                        );
-                      }}
+                      onPress={() =>
+                        void printReceiptsForOrders(Array.from(groupedOrders))
+                      }
                       activeOpacity={1}
+                      disabled={isPrintingReceipts}
                     >
                       <FontAwesome5 name="print" size={14} color="#2563EB" />
-                      <Text style={styles.printButtonText}>In mã đơn</Text>
+                      <Text style={styles.printButtonText}>In đơn</Text>
                     </TouchableOpacity>
                   </View>
                   {groupedOrders.size > 0 && (
@@ -1902,6 +1968,8 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         hasSelectedBatch={hasSelectedBatch()}
         onCreateBatch={handleCreateBatchShipment}
         onBatchShipment={handleBatchShipment}
+        onPrintOrders={handlePrintSelectedReceipts}
+        isPrintingOrders={isPrintingReceipts}
         onConfirmGroupShipment={handleConfirmGroupShipment}
         showGroupConfirm={groupedOrders.size > 0}
       />
@@ -1926,6 +1994,10 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
           message="Đang tạo chuyến vận chuyển..."
           fullScreen={false}
         />
+      )}
+
+      {isPrintingReceipts && (
+        <LoadingScreen message="Đang tạo biên nhận..." fullScreen={false} />
       )}
     </View>
   );

@@ -1,6 +1,7 @@
 import { authService, extractLoginTokens } from "@/services/api/authService";
 import { clearGlobalUserRole, setGlobalUserRole } from "@/utils/globalState";
 import { isJwtExpired, jwtDecoder } from "@/utils/jwtDecoder";
+import { ensureCustomerOrderTokensFromStorage } from "./customerOrderSession";
 import { clearTokens, getAccessToken, getRefreshToken, storeTokens } from "./tokenStore";
 
 let hydrateInFlight: Promise<boolean> | null = null;
@@ -28,6 +29,7 @@ async function runEnsureSessionFromStoredTokens(): Promise<boolean> {
 
   if (access && !isJwtExpired(access)) {
     applyRolesFromAccessToken(access);
+    await ensureCustomerOrderTokensFromStorage();
     return true;
   }
 
@@ -37,6 +39,7 @@ async function runEnsureSessionFromStoredTokens(): Promise<boolean> {
       const tokens = extractLoginTokens(body);
       await storeTokens(tokens.access_token, tokens.refresh_token);
       applyRolesFromAccessToken(tokens.access_token);
+      await ensureCustomerOrderTokensFromStorage();
       return true;
     } catch {
       try {

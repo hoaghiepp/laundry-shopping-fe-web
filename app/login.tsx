@@ -1,10 +1,10 @@
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
 import { LoginForm } from "@/components/auth/LoginForm";
-import { RegisterForm } from "@/components/auth/RegisterForm";
-import { RoleSelector, UserRole } from "@/components/auth/RoleSelector";
+import { UserRole } from "@/components/auth/RoleSelector";
 import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import { PlatformMobile, SecureStoreKeys } from "@/constants/enum";
-import { clearCustomerOrderTokens, clearTokens, storeCustomerOrderTokens } from "@/lib/tokenStore";
+import { loginAndStoreCustomerOrderTokens } from "@/lib/customerOrderSession";
+import { clearCustomerOrderTokens, clearTokens } from "@/lib/tokenStore";
 import { compatAlert } from "@/lib/compatAlert";
 import { authService, extractLoginTokens, getLoginFailureMessage } from "@/services/api/authService";
 import { customerService } from "@/services/api/customerService";
@@ -22,6 +22,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
 
@@ -32,7 +33,8 @@ enum AuthMode {
 }
 
 export default function LoginScreen() {
-  const [role, setRole] = useState<UserRole>(UserRole.USER);
+  /** Web app: staff / store portal only (no customer or factory login). */
+  const staffLoginRole = UserRole.STORE;
   const [authMode, setAuthMode] = useState<AuthMode>(AuthMode.LOGIN);
   const [isLoading, setIsLoading] = useState(false);
   const [isAutoLoggingIn, setIsAutoLoggingIn] = useState(true);
@@ -296,24 +298,8 @@ export default function LoginScreen() {
       }
     }
 
-    const isPureAdmin =
-      roles.includes("ROLE_ADMIN") && !roles.includes("ROLE_SUPER_ADMIN");
-    if (isPureAdmin && routeRole === UserRole.STORE && email && password) {
-      try {
-        const customerOrderEmail = `customer${email}`;
-        const customerOrderRes: any = await authService.login({
-          email: customerOrderEmail,
-          password,
-        });
-        const coTokens = extractLoginTokens(customerOrderRes);
-        const coAccess = coTokens.access_token;
-        const coRefresh = coTokens.refresh_token;
-        if (coAccess) {
-          await storeCustomerOrderTokens(coAccess, coRefresh);
-        }
-      } catch (err) {
-        console.warn("Customer order account login failed:", err);
-      }
+    if (routeRole === UserRole.STORE && email && password) {
+      await loginAndStoreCustomerOrderTokens(email, password);
     }
 
     if (routeRole === UserRole.USER) {
@@ -416,7 +402,10 @@ export default function LoginScreen() {
           } catch {
             roles = [];
           }
-          const loginRole = resolveLoginRoleForSession(roles, savedRole);
+          const loginRole =
+            Platform.OS === "web"
+              ? UserRole.STORE
+              : resolveLoginRoleForSession(roles, savedRole);
           const emailForSession = savedEmail || emailFromToken;
           const passwordForSession = savedPassword || "";
           await runPostAuthNavigation(token, loginRole, {
@@ -458,7 +447,10 @@ export default function LoginScreen() {
           } catch {
             rolesNew = [];
           }
-          const loginRoleAfterRefresh = resolveLoginRoleForSession(rolesNew, savedRole);
+          const loginRoleAfterRefresh =
+            Platform.OS === "web"
+              ? UserRole.STORE
+              : resolveLoginRoleForSession(rolesNew, savedRole);
           await runPostAuthNavigation(tokens.access_token, loginRoleAfterRefresh, {
             showSuccessAlert: false,
             email: savedEmail || emailFromAccess,
@@ -488,9 +480,9 @@ export default function LoginScreen() {
         SecureStoreKeys.REMEMBER_ME_ENABLED
       );
 
-      if (rememberMeEnabled === "true" && savedEmail && savedPassword && savedRole) {
+      if (rememberMeEnabled === "true" && savedEmail && savedPassword) {
         setIsAutoLoggingIn(true);
-        await performLogin(savedEmail, savedPassword, savedRole, false);
+        await performLogin(savedEmail, savedPassword, staffLoginRole, false);
       } else {
         setIsAutoLoggingIn(false);
       }
@@ -506,7 +498,7 @@ export default function LoginScreen() {
         await SecureStore.setItemAsync(SecureStoreKeys.REMEMBER_ME_ENABLED, "true");
         await SecureStore.setItemAsync(SecureStoreKeys.REMEMBER_ME_EMAIL, email);
         await SecureStore.setItemAsync(SecureStoreKeys.REMEMBER_ME_PASSWORD, password);
-        await SecureStore.setItemAsync(SecureStoreKeys.REMEMBER_ME_ROLE, role);
+        await SecureStore.setItemAsync(SecureStoreKeys.REMEMBER_ME_ROLE, staffLoginRole);
       } catch (error) {
         console.error("Error saving remember me:", error);
       }
@@ -514,53 +506,7 @@ export default function LoginScreen() {
       await clearRememberMe();
     }
 
-    await performLogin(email, password, role, true);
-  };
-
-  const handleRegister = async (data: {
-    name: string;
-    email: string;
-    phone: string;
-    password: string;
-    otp?: string;
-    employeeCode?: string;
-  }) => {
-    if (role === UserRole.USER) {
-      try {
-        const nameParts = data.name.trim().split(" ");
-        const firstName = nameParts[0] || "";
-        const lastName = nameParts.slice(1).join(" ") || nameParts[0];
-        console.log(firstName, lastName, data.email, data.password);
-        const response = await authService.register({
-          full_name: data.name,
-          phone_number: data.phone,
-          email: data.email,
-          password: data.password,
-        });
-        console.log(response);
-        compatAlert(
-          "Thành công",
-          "Đăng ký KHÁCH HÀNG thành công! Vui lòng đăng nhập.",
-          [
-            {
-              text: "OK",
-              onPress: () => setAuthMode(AuthMode.LOGIN),
-            },
-          ]
-        );
-      } catch (error: any) {
-        compatAlert(
-          "Lỗi",
-          error.message || "Đăng ký thất bại. Vui lòng thử lại."
-        );
-        console.log(error);
-      }
-    } else {
-      compatAlert(
-        "Thành công",
-        `Gửi yêu cầu kích hoạt (${role}) thành công! Chờ Admin duyệt.`
-      );
-    }
+    await performLogin(email, password, staffLoginRole, true);
   };
 
   const handleForgotPassword = (
@@ -580,133 +526,167 @@ export default function LoginScreen() {
     );
   };
 
-  const handleRoleChange = (newRole: UserRole) => {
-    setRole(newRole);
-    setAuthMode(AuthMode.LOGIN);
-  };
+  const { height: windowHeight } = useWindowDimensions();
 
   if (isAutoLoggingIn) {
     return <LoadingScreen message="Đang đăng nhập tự động..." />;
   }
 
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="dark-content" backgroundColor="#FFFFFF" />
+    <View style={styles.page}>
+      <StatusBar barStyle="dark-content" backgroundColor="#E8EEF7" />
 
       {isLoading && <LoadingScreen message="Đang đăng nhập..." fullScreen={false} />}
+
+      <View style={styles.pageAccentTop} pointerEvents="none" />
+      <View style={styles.pageAccentBottom} pointerEvents="none" />
 
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : "height"}
         style={styles.keyboardView}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { minHeight: Math.max(windowHeight, 520) },
+          ]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {/* Branding */}
-          <View style={styles.branding}>
-            <View style={styles.iconContainer}>
-              <View style={styles.icon}>
-                <View style={styles.iconInner}>
-                  {/* Simple T-shirt representation */}
-                  <View style={styles.tshirt} />
-                </View>
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <View style={styles.logo}>
+                <View style={styles.logoMark} />
               </View>
+              <Text style={styles.brandTitle}>Laundry Pro</Text>
+              <Text style={styles.brandSubtitle}>Cổng quản lý cửa hàng</Text>
             </View>
-            <Text style={styles.brandTitle}>Laundry Pro</Text>
+
+            <View style={styles.cardDivider} />
+
+            <View style={styles.cardBody}>
+              {authMode === AuthMode.LOGIN && (
+                <LoginForm onLogin={handleLogin} />
+              )}
+
+              {authMode === AuthMode.FORGOT && (
+                <ForgotPasswordForm
+                  onSubmit={handleForgotPassword}
+                  onBack={() => setAuthMode(AuthMode.LOGIN)}
+                />
+              )}
+            </View>
           </View>
 
-          {/* Role Selector - Hidden for Forgot Password */}
-          {authMode !== AuthMode.FORGOT && (
-            <RoleSelector selectedRole={role} onRoleChange={handleRoleChange} />
-          )}
-
-          {/* Auth Forms */}
-          <View style={styles.formContainer}>
-            {authMode === AuthMode.LOGIN && (
-              <LoginForm
-                role={role}
-                onLogin={handleLogin}
-                onSwitchToRegister={() => setAuthMode(AuthMode.REGISTER)}
-                onSwitchToForgot={() => setAuthMode(AuthMode.FORGOT)}
-              />
-            )}
-
-            {authMode === AuthMode.REGISTER && (
-              <RegisterForm
-                role={role}
-                onRegister={handleRegister}
-                onSwitchToLogin={() => setAuthMode(AuthMode.LOGIN)}
-              />
-            )}
-
-            {authMode === AuthMode.FORGOT && (
-              <ForgotPasswordForm
-                onSubmit={handleForgotPassword}
-                onBack={() => setAuthMode(AuthMode.LOGIN)}
-              />
-            )}
-          </View>
+          <Text style={styles.pageFooter}>© Laundry Pro · Phiên bản nhân viên</Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>
   );
 }
 
+const CARD_MAX_WIDTH = 440;
+
 const styles = StyleSheet.create({
-  container: {
+  page: {
     flex: 1,
-    backgroundColor: "#F3F4F6",
+    backgroundColor: "#E8EEF7",
+  },
+  pageAccentTop: {
+    position: "absolute",
+    top: -120,
+    right: -80,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: "rgba(37, 99, 235, 0.08)",
+  },
+  pageAccentBottom: {
+    position: "absolute",
+    bottom: -100,
+    left: -60,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: "rgba(99, 102, 241, 0.06)",
   },
   keyboardView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 40,
-  },
-  branding: {
-    alignItems: "center",
-    marginTop: 16,
-    marginBottom: 24,
-  },
-  iconContainer: {
-    marginBottom: 12,
-  },
-  icon: {
-    width: 64,
-    height: 64,
-    backgroundColor: "#2563EB",
-    borderRadius: 16,
     justifyContent: "center",
     alignItems: "center",
+    paddingHorizontal: 20,
+    paddingVertical: 32,
+  },
+  card: {
+    width: "100%",
+    maxWidth: CARD_MAX_WIDTH,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    paddingHorizontal: 28,
+    paddingTop: 28,
+    paddingBottom: 32,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 12 },
+    shadowOpacity: Platform.OS === "web" ? 0.08 : 0.12,
+    shadowRadius: 24,
+    elevation: 8,
+    ...(Platform.OS === "web"
+      ? ({ boxShadow: "0 12px 40px rgba(15, 23, 42, 0.08)" } as object)
+      : {}),
+  },
+  cardHeader: {
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  logo: {
+    width: 56,
+    height: 56,
+    backgroundColor: "#2563EB",
+    borderRadius: 14,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 12,
     shadowColor: "#2563EB",
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.25,
     shadowRadius: 8,
     elevation: 4,
-    transform: [{ rotate: "3deg" }],
   },
-  iconInner: {
-    width: 32,
-    height: 32,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  tshirt: {
-    width: 24,
-    height: 24,
+  logoMark: {
+    width: 22,
+    height: 22,
     backgroundColor: "#FFFFFF",
     borderRadius: 4,
   },
   brandTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "700",
-    color: "#1F2937",
+    color: "#111827",
+    letterSpacing: -0.3,
   },
-  formContainer: {
+  brandSubtitle: {
+    marginTop: 4,
+    fontSize: 13,
+    color: "#6B7280",
+    fontWeight: "500",
+  },
+  cardDivider: {
+    height: 1,
+    backgroundColor: "#F3F4F6",
+    marginVertical: 20,
+  },
+  cardBody: {
     width: "100%",
+  },
+  pageFooter: {
+    marginTop: 20,
+    fontSize: 12,
+    color: "#9CA3AF",
+    textAlign: "center",
   },
 });

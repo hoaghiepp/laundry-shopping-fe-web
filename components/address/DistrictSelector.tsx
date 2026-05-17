@@ -11,6 +11,7 @@ interface DistrictSelectorProps {
   districtName?: string; // For name-based matching when editing
   onSelect: (districtId: string | number, districtName: string) => void;
   error?: string;
+  compact?: boolean;
 }
 
 export const DistrictSelector: React.FC<DistrictSelectorProps> = ({
@@ -19,6 +20,7 @@ export const DistrictSelector: React.FC<DistrictSelectorProps> = ({
   districtName,
   onSelect,
   error,
+  compact = false,
 }) => {
   const [locationsSnap, setLocationsSnap] = useState(getGoshipLocationsSnapshot());
   const [resolvedValue, setResolvedValue] = useState<string | number | null>(value || null);
@@ -91,6 +93,7 @@ export const DistrictSelector: React.FC<DistrictSelectorProps> = ({
       error={error}
       loading={loading}
       disabled={!cityId}
+      compact={compact}
     />
   );
 };

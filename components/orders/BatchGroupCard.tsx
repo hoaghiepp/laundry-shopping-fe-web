@@ -14,7 +14,7 @@ interface BatchGroupCardProps {
   onSelect: (selected: boolean) => void;
   onToggleExpand: () => void;
   onOrderPress: (order: Order) => void;
-  onPrintOrderCode: (orderCode: string) => void;
+  onPrintOrders: (orderCodes: string[]) => void;
 }
 
 export const BatchGroupCard: React.FC<BatchGroupCardProps> = ({
@@ -27,7 +27,7 @@ export const BatchGroupCard: React.FC<BatchGroupCardProps> = ({
   onSelect,
   onToggleExpand,
   onOrderPress,
-  onPrintOrderCode,
+  onPrintOrders,
 }) => {
   return (
     <View style={styles.groupCard}>
@@ -53,13 +53,11 @@ export const BatchGroupCard: React.FC<BatchGroupCardProps> = ({
         </View>
         <TouchableOpacity
           style={styles.printButton}
-          onPress={() => {
-            orderCodes.forEach((code) => onPrintOrderCode(code));
-          }}
+          onPress={() => onPrintOrders(orderCodes)}
           activeOpacity={1}
         >
           <FontAwesome5 name="print" size={14} color="#2563EB" />
-          <Text style={styles.printButtonText}>In mã đơn</Text>
+          <Text style={styles.printButtonText}>In đơn</Text>
         </TouchableOpacity>
       </View>
       <TouchableOpacity

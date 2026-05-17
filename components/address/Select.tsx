@@ -19,6 +19,7 @@ interface SelectProps {
   error?: string;
   disabled?: boolean;
   loading?: boolean;
+  compact?: boolean;
 }
 
 export const Select: React.FC<SelectProps> = ({
@@ -30,6 +31,7 @@ export const Select: React.FC<SelectProps> = ({
   error,
   disabled = false,
   loading = false,
+  compact = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -41,11 +43,12 @@ export const Select: React.FC<SelectProps> = ({
   };
 
   return (
-    <Box style={styles.container}>
-      <UIText style={styles.label}>{label}</UIText>
+    <Box style={[styles.container, compact && styles.containerCompact]}>
+      <UIText style={[styles.label, compact && styles.labelCompact]}>{label}</UIText>
       <TouchableOpacity
         style={[
           styles.selectContainer,
+          compact && styles.selectContainerCompact,
           error && styles.selectError,
           disabled && styles.selectDisabled,
         ]}
@@ -53,7 +56,11 @@ export const Select: React.FC<SelectProps> = ({
         disabled={disabled || loading}
         activeOpacity={1}
       >
-        <Text style={[styles.selectText, !selectedOption && styles.placeholderText]}>
+        <Text
+          style={[styles.selectText, !selectedOption && styles.placeholderText]}
+          numberOfLines={1}
+          ellipsizeMode="tail"
+        >
           {loading ? 'Đang tải...' : selectedOption ? selectedOption.label : placeholder}
         </Text>
         <FontAwesome5
@@ -124,11 +131,17 @@ const styles = StyleSheet.create({
   container: {
     marginBottom: 16,
   },
+  containerCompact: {
+    marginBottom: 8,
+  },
   label: {
     fontSize: 12,
     fontWeight: '700',
     color: '#6B7280',
     marginBottom: 4,
+  },
+  labelCompact: {
+    marginBottom: 2,
   },
   selectContainer: {
     flexDirection: 'row',
@@ -141,6 +154,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     minHeight: 48,
+  },
+  selectContainerCompact: {
+    minHeight: 40,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 10,
   },
   selectError: {
     borderColor: '#EF4444',

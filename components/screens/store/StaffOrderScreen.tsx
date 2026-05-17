@@ -1,18 +1,21 @@
 import { ProductType } from "@/constants/enum";
 import { compatAlert } from "@/lib/compatAlert";
 import { ProductItem } from "@/models/model";
+import { ensureCustomerOrderTokensFromStorage } from "@/lib/customerOrderSession";
 import { staffOrderService } from "@/services/api/staffOrderService";
 import { StoreAddress, storeService } from "@/services/api/storeService";
+import { StaffOrderCartDialog } from "@/components/screens/store/StaffOrderCartDialog";
 import { formatCurrencyVND } from "@/utils/format";
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   FlatList,
   Image,
   KeyboardAvoidingView,
-  Modal,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -105,45 +108,6 @@ const ProductRow = React.memo(({
   </View>
 ));
 
-// ─── Cart Item Row ─────────────────────────────────────────────────────────────
-
-const CartItemRow = ({
-  entry, loading, onIncrease, onDecrease, onRemove,
-}: {
-  entry: CartEntry;
-  loading: boolean;
-  onIncrease: () => void;
-  onDecrease: () => void;
-  onRemove: () => void;
-}) => (
-  <View style={cRow.row}>
-    <View style={cRow.info}>
-      <Text style={cRow.name} numberOfLines={1}>{entry.product.name}</Text>
-      <Text style={cRow.unitPrice}>{formatCurrencyVND(entry.product.price)}</Text>
-    </View>
-    {loading ? (
-      <ActivityIndicator size="small" color="#2563EB" style={{ marginHorizontal: 12 }} />
-    ) : (
-      <View style={cRow.controls}>
-        <TouchableOpacity style={cRow.btn} onPress={entry.quantity === 1 ? onRemove : onDecrease}>
-          <FontAwesome5
-            name={entry.quantity === 1 ? "trash" : "minus"}
-            size={11}
-            color={entry.quantity === 1 ? "#EF4444" : "#2563EB"}
-          />
-        </TouchableOpacity>
-        <Text style={cRow.qty}>{entry.quantity}</Text>
-        <TouchableOpacity style={cRow.btn} onPress={onIncrease}>
-          <FontAwesome5 name="plus" size={11} color="#2563EB" />
-        </TouchableOpacity>
-      </View>
-    )}
-    <Text style={cRow.subtotal}>{formatCurrencyVND(entry.product.price * entry.quantity)}</Text>
-  </View>
-);
-
-// ─── Main Screen ──────────────────────────────────────────────────────────────
-
 export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
   storeId,
   onBack,
@@ -160,21 +124,30 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
   const [itemLoading, setItemLoading] = useState<Record<string, boolean>>({});
   const [cartSyncing, setCartSyncing] = useState(false);
   const [storeAddress, setStoreAddress] = useState<StoreAddress | null>(null);
+  const [storeName, setStoreName] = useState("");
   const [showCart, setShowCart] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [form, setForm] = useState<CheckoutForm>({ fullName: "", phone: "", note: "" });
 
-  // Load cart and store address once on mount
+  // Load cart and store profile when store changes
   useEffect(() => {
     syncCart();
     if (storeId) {
-      storeService.getStoreProfile(storeId).then((res) => {
-        const addr = res?.data?.address;
-        if (addr && typeof addr !== "string") setStoreAddress(addr as StoreAddress);
-      }).catch(() => {});
+      storeService
+        .getStoreProfile(storeId)
+        .then((res) => {
+          const data = res?.data;
+          if (data?.name) setStoreName(data.name);
+          const addr = data?.address;
+          if (addr && typeof addr !== "string") setStoreAddress(addr as StoreAddress);
+        })
+        .catch(() => {});
+    } else {
+      setStoreName("");
+      setStoreAddress(null);
     }
-  }, []);
+  }, [storeId]);
 
   // Reset and reload when tab changes
   useEffect(() => {
@@ -184,9 +157,27 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
     fetchPage(0, activeTab, true);
   }, [activeTab, storeId]);
 
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    if (!showCart && !showCheckout) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (showCheckout) {
+        setShowCheckout(false);
+        return true;
+      }
+      if (showCart) {
+        setShowCart(false);
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [showCart, showCheckout]);
+
   const syncCart = async () => {
     setCartSyncing(true);
     try {
+      await ensureCustomerOrderTokensFromStorage();
       const res = await staffOrderService.getCustomerCart();
       const items: any[] = res?.data?.cart_items ?? [];
       setCart(
@@ -477,140 +468,124 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
         </TouchableOpacity>
       )}
 
-      {/* ── Cart Modal ── */}
-      <Modal visible={showCart} animationType="slide" transparent onRequestClose={() => setShowCart(false)}>
-        <View style={sheet.overlay}>
-          <TouchableOpacity style={sheet.backdrop} activeOpacity={1} onPress={() => setShowCart(false)} />
-          <View style={sheet.panel}>
-            <View style={sheet.handle} />
-            <View style={sheet.header}>
-              <Text style={sheet.title}>Giỏ hàng ({totalItems})</Text>
-              <TouchableOpacity onPress={() => setShowCart(false)}>
-                <FontAwesome5 name="chevron-down" size={16} color="#6B7280" />
-              </TouchableOpacity>
-            </View>
+      <StaffOrderCartDialog
+        visible={showCart}
+        storeName={storeName}
+        cart={cart}
+        totalItems={totalItems}
+        totalPrice={totalPrice}
+        itemLoading={itemLoading}
+        onClose={() => setShowCart(false)}
+        onCheckout={() => {
+          setShowCart(false);
+          setShowCheckout(true);
+        }}
+        onIncrease={handleAdd}
+        onDecrease={handleDecrease}
+        onRemove={handleRemoveEntry}
+      />
 
-            {cart.length === 0 ? (
-              <View style={[styles.centered, { paddingVertical: 40 }]}>
-                <FontAwesome5 name="shopping-cart" size={40} color="#E5E7EB" />
-                <Text style={styles.hint}>Giỏ hàng trống</Text>
-              </View>
-            ) : (
-              <>
-                <ScrollView style={sheet.list} showsVerticalScrollIndicator={false}>
-                  {cart.map((entry) => (
-                    <CartItemRow
-                      key={entry.product.id}
-                      entry={entry}
-                      loading={!!itemLoading[entry.product.id]}
-                      onIncrease={() => handleAdd(entry.product)}
-                      onDecrease={() => handleDecrease(entry.product)}
-                      onRemove={() => handleRemoveEntry(entry)}
-                    />
-                  ))}
-                </ScrollView>
-                <View style={sheet.footer}>
-                  <View style={sheet.totalRow}>
-                    <Text style={sheet.totalLabel}>Tổng cộng</Text>
-                    <Text style={sheet.totalAmt}>{formatCurrencyVND(totalPrice)}</Text>
-                  </View>
+      {/* ── Checkout — same inline dialog pattern ── */}
+      {showCheckout && (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : "height"}
+          style={cartDialog.kav}
+        >
+          <View style={cartDialog.kavInner} pointerEvents="box-none">
+            <Pressable
+              style={cartDialog.backdrop}
+              onPress={() => setShowCheckout(false)}
+              accessibilityRole="button"
+              accessibilityLabel="Đóng"
+            />
+            <View style={cartDialog.lift} pointerEvents="box-none">
+              <View style={[sheet.panel, sheet.checkoutPanel]}>
+                <View style={sheet.handle} />
+                <View style={sheet.header}>
                   <TouchableOpacity
-                    style={sheet.checkoutBtn}
-                    onPress={() => { setShowCart(false); setShowCheckout(true); }}
-                    activeOpacity={0.85}
+                    onPress={() => {
+                      setShowCheckout(false);
+                      setShowCart(true);
+                    }}
                   >
-                    <Text style={sheet.checkoutBtnText}>Tiến hành đặt hàng</Text>
+                    <FontAwesome5 name="arrow-left" size={16} color="#6B7280" />
+                  </TouchableOpacity>
+                  <Text style={sheet.title}>Thông tin đặt hàng</Text>
+                  <TouchableOpacity onPress={() => setShowCheckout(false)}>
+                    <FontAwesome5 name="times" size={18} color="#6B7280" />
                   </TouchableOpacity>
                 </View>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
 
-      {/* ── Checkout Modal ── */}
-      <Modal visible={showCheckout} animationType="slide" transparent onRequestClose={() => setShowCheckout(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-          <View style={sheet.overlay}>
-            <TouchableOpacity style={sheet.backdrop} activeOpacity={1} onPress={() => setShowCheckout(false)} />
-            <View style={[sheet.panel, { maxHeight: "75%" }]}>
-              <View style={sheet.handle} />
-              <View style={sheet.header}>
-                <TouchableOpacity onPress={() => { setShowCheckout(false); setShowCart(true); }}>
-                  <FontAwesome5 name="arrow-left" size={16} color="#6B7280" />
-                </TouchableOpacity>
-                <Text style={sheet.title}>Thông tin đặt hàng</Text>
-                <TouchableOpacity onPress={() => setShowCheckout(false)}>
-                  <FontAwesome5 name="times" size={18} color="#6B7280" />
-                </TouchableOpacity>
-              </View>
-
-              <ScrollView showsVerticalScrollIndicator={false}>
-                <View style={co.field}>
-                  <Text style={co.label}>Tên khách hàng *</Text>
-                  <TextInput
-                    style={co.input}
-                    placeholder="Nguyễn Văn A"
-                    placeholderTextColor="#9CA3AF"
-                    value={form.fullName}
-                    onChangeText={(v) => setForm((f) => ({ ...f, fullName: v }))}
-                  />
-                </View>
-                <View style={co.field}>
-                  <Text style={co.label}>Số điện thoại *</Text>
-                  <TextInput
-                    style={co.input}
-                    placeholder="0901234567"
-                    placeholderTextColor="#9CA3AF"
-                    value={form.phone}
-                    onChangeText={(v) => setForm((f) => ({ ...f, phone: v }))}
-                    keyboardType="phone-pad"
-                  />
-                </View>
-                <View style={co.field}>
-                  <Text style={co.label}>Ghi chú</Text>
-                  <TextInput
-                    style={[co.input, co.textarea]}
-                    placeholder="Ghi chú cho đơn hàng..."
-                    placeholderTextColor="#9CA3AF"
-                    value={form.note}
-                    onChangeText={(v) => setForm((f) => ({ ...f, note: v }))}
-                    multiline
-                    numberOfLines={3}
-                  />
-                </View>
-                <View style={co.summary}>
-                  <Text style={co.summaryTitle}>Tóm tắt đơn hàng</Text>
-                  {cart.map((e) => (
-                    <View key={e.product.id} style={co.row}>
-                      <Text style={co.rowName} numberOfLines={1}>{e.product.name} ×{e.quantity}</Text>
-                      <Text style={co.rowAmt}>{formatCurrencyVND(e.product.price * e.quantity)}</Text>
-                    </View>
-                  ))}
-                  <View style={co.divider} />
-                  <View style={co.row}>
-                    <Text style={co.totalLabel}>Tổng cộng</Text>
-                    <Text style={co.totalAmt}>{formatCurrencyVND(totalPrice)}</Text>
+                <ScrollView showsVerticalScrollIndicator={false}>
+                  <View style={co.field}>
+                    <Text style={co.label}>Tên khách hàng *</Text>
+                    <TextInput
+                      style={co.input}
+                      placeholder="Nguyễn Văn A"
+                      placeholderTextColor="#9CA3AF"
+                      value={form.fullName}
+                      onChangeText={(v) => setForm((f) => ({ ...f, fullName: v }))}
+                    />
                   </View>
-                </View>
-              </ScrollView>
+                  <View style={co.field}>
+                    <Text style={co.label}>Số điện thoại *</Text>
+                    <TextInput
+                      style={co.input}
+                      placeholder="0901234567"
+                      placeholderTextColor="#9CA3AF"
+                      value={form.phone}
+                      onChangeText={(v) => setForm((f) => ({ ...f, phone: v }))}
+                      keyboardType="phone-pad"
+                    />
+                  </View>
+                  <View style={co.field}>
+                    <Text style={co.label}>Ghi chú</Text>
+                    <TextInput
+                      style={[co.input, co.textarea]}
+                      placeholder="Ghi chú cho đơn hàng..."
+                      placeholderTextColor="#9CA3AF"
+                      value={form.note}
+                      onChangeText={(v) => setForm((f) => ({ ...f, note: v }))}
+                      multiline
+                      numberOfLines={3}
+                    />
+                  </View>
+                  <View style={co.summary}>
+                    <Text style={co.summaryTitle}>Tóm tắt đơn hàng</Text>
+                    {cart.map((e) => (
+                      <View key={e.product.id} style={co.row}>
+                        <Text style={co.rowName} numberOfLines={1}>
+                          {e.product.name} ×{e.quantity}
+                        </Text>
+                        <Text style={co.rowAmt}>{formatCurrencyVND(e.product.price * e.quantity)}</Text>
+                      </View>
+                    ))}
+                    <View style={co.divider} />
+                    <View style={co.row}>
+                      <Text style={co.totalLabel}>Tổng cộng</Text>
+                      <Text style={co.totalAmt}>{formatCurrencyVND(totalPrice)}</Text>
+                    </View>
+                  </View>
+                </ScrollView>
 
-              <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
-                <TouchableOpacity
-                  style={[sheet.checkoutBtn, checkoutLoading && { opacity: 0.7 }]}
-                  onPress={handleCheckout}
-                  disabled={checkoutLoading}
-                >
-                  {checkoutLoading
-                    ? <ActivityIndicator color="#fff" />
-                    : <Text style={sheet.checkoutBtnText}>Xác nhận đặt hàng</Text>
-                  }
-                </TouchableOpacity>
+                <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
+                  <TouchableOpacity
+                    style={[sheet.checkoutBtn, checkoutLoading && { opacity: 0.7 }]}
+                    onPress={handleCheckout}
+                    disabled={checkoutLoading}
+                  >
+                    {checkoutLoading ? (
+                      <ActivityIndicator color="#fff" />
+                    ) : (
+                      <Text style={sheet.checkoutBtnText}>Xác nhận đặt hàng</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
           </View>
         </KeyboardAvoidingView>
-      </Modal>
+      )}
     </View>
   );
 };
@@ -618,7 +593,7 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#F3F4F6" },
+  root: { flex: 1, backgroundColor: "#F3F4F6", position: "relative" },
   header: {
     backgroundColor: "#1E40AF",
     paddingTop: 44,
@@ -653,18 +628,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   badgeText: { color: "#fff", fontSize: 10, fontWeight: "700" },
-  headerTitle: { flex: 1, color: "#fff", fontSize: 17, fontWeight: "700" },
+  headerTitle: { flex: 1, color: "#fff", fontSize: 18, fontWeight: "700" },
 
   searchBar: {
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#fff",
-    marginHorizontal: 12,
-    marginTop: 10,
-    marginBottom: 6,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 8,
     borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     gap: 8,
     shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
@@ -672,13 +647,13 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
   },
-  searchInput: { flex: 1, fontSize: 14, color: "#1F2937", paddingVertical: 0 },
+  searchInput: { flex: 1, fontSize: 15, color: "#1F2937", paddingVertical: 0 },
 
   tabs: {
     flexDirection: "row",
     backgroundColor: "#fff",
-    marginHorizontal: 12,
-    marginBottom: 6,
+    marginHorizontal: 16,
+    marginBottom: 8,
     borderRadius: 10,
     padding: 4,
     gap: 4,
@@ -698,12 +673,12 @@ const styles = StyleSheet.create({
     borderRadius: 7,
   },
   tabActive: { backgroundColor: "#EFF6FF" },
-  tabLabel: { fontSize: 13, fontWeight: "600", color: "#6B7280" },
+  tabLabel: { fontSize: 14, fontWeight: "600", color: "#6B7280" },
   tabLabelActive: { color: "#2563EB" },
 
   centered: { flex: 1, justifyContent: "center", alignItems: "center", gap: 10 },
   hint: { color: "#9CA3AF", fontSize: 14 },
-  separator: { height: 1, backgroundColor: "#F3F4F6", marginLeft: 80 },
+  separator: { height: 1, backgroundColor: "#F3F4F6", marginLeft: 96 },
   listContent: { paddingVertical: 4 },
 
   loadMoreRow: {
@@ -748,11 +723,11 @@ const pRow = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     backgroundColor: "#fff",
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 16,
-    gap: 12,
+    gap: 14,
   },
-  imageBox: { width: 52, height: 52, borderRadius: 8, overflow: "hidden", flexShrink: 0 },
+  imageBox: { width: 64, height: 64, borderRadius: 10, overflow: "hidden", flexShrink: 0 },
   image: { width: "100%", height: "100%" },
   imagePlaceholder: {
     flex: 1,
@@ -761,14 +736,14 @@ const pRow = StyleSheet.create({
     alignItems: "center",
   },
   info: { flex: 1 },
-  name: { fontSize: 14, fontWeight: "600", color: "#1F2937", lineHeight: 18, marginBottom: 2 },
-  price: { fontSize: 13, fontWeight: "700", color: "#2563EB" },
-  unit: { fontSize: 11, color: "#9CA3AF" },
+  name: { fontSize: 15, fontWeight: "600", color: "#1F2937", lineHeight: 20, marginBottom: 4 },
+  price: { fontSize: 14, fontWeight: "700", color: "#2563EB" },
+  unit: { fontSize: 12, color: "#9CA3AF" },
   controls: { alignItems: "center", justifyContent: "center" },
   addBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#2563EB",
     justifyContent: "center",
     alignItems: "center",
@@ -784,51 +759,46 @@ const pRow = StyleSheet.create({
     paddingVertical: 5,
   },
   qtyBtn: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     backgroundColor: "#EFF6FF",
     justifyContent: "center",
     alignItems: "center",
   },
-  qtyNum: { fontSize: 14, fontWeight: "700", color: "#1E40AF", minWidth: 20, textAlign: "center" },
+  qtyNum: { fontSize: 15, fontWeight: "700", color: "#1E40AF", minWidth: 22, textAlign: "center" },
 });
 
-const cRow = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F9FAFB",
-    gap: 8,
+const cartDialog = StyleSheet.create({
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.4)",
   },
-  info: { flex: 1 },
-  name: { fontSize: 13, fontWeight: "600", color: "#1F2937", marginBottom: 2 },
-  unitPrice: { fontSize: 12, color: "#9CA3AF" },
-  controls: { flexDirection: "row", alignItems: "center", gap: 8 },
-  btn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#F3F4F6",
-    justifyContent: "center",
-    alignItems: "center",
+  lift: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: "flex-end",
   },
-  qty: { fontSize: 14, fontWeight: "700", color: "#1F2937", minWidth: 20, textAlign: "center" },
-  subtotal: { fontSize: 13, fontWeight: "700", color: "#2563EB", minWidth: 80, textAlign: "right" },
+  kav: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 210,
+    elevation: 210,
+  },
+  kavInner: {
+    flex: 1,
+    position: "relative",
+  },
 });
 
 const sheet = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: "flex-end" },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(0,0,0,0.4)" },
   panel: {
     backgroundColor: "#fff",
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: "80%",
     paddingBottom: 28,
+  },
+  checkoutPanel: {
+    maxHeight: "75%",
   },
   handle: {
     width: 36,

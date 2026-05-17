@@ -418,19 +418,13 @@ export const LogisticsScreen: React.FC<LogisticsScreenProps> = ({
         console.log('Shipment created:', shipmentResponse);
 
         try {
-          // Update trip status
           await logisticService.updateStatusTrips(tripId, LogisticTripStatus.IN_TRANSIT);
-          compatAlert('Thành công', 'Đã gọi xe và chuyến đi đang được vận chuyển', [
-            {
-              text: 'OK',
-              onPress: () => {
-                // Refresh outbound trips
-                if (activeTab === 'out') {
-                  fetchOutboundTrips();
-                }
-              },
-            },
-          ]);
+          handleCloseCarrierDialog();
+          handleCloseModal();
+          if (activeTab === 'out') {
+            fetchOutboundTrips();
+          }
+          compatAlert('Thành công', 'Đã gọi xe và chuyến đi đang được vận chuyển');
         } catch (error: any) {
           console.error('Failed to update trip status:', error);
           compatAlert('Lỗi', error.message || 'Không thể cập nhật trạng thái chuyến đi');
@@ -538,18 +532,11 @@ export const LogisticsScreen: React.FC<LogisticsScreenProps> = ({
                     tripId,
                     LogisticTripStatus.IN_TRANSIT
                   );
+                  handleCloseModal();
+                  fetchOutboundTrips();
                   compatAlert(
                     "Thành công",
-                    "Đã chuyển trạng thái sang đang vận chuyển",
-                    [
-                      {
-                        text: "OK",
-                        onPress: () => {
-                          handleCloseModal();
-                          fetchOutboundTrips();
-                        },
-                      },
-                    ]
+                    "Đã chuyển trạng thái sang đang vận chuyển"
                   );
                 } catch (error: any) {
                   console.error("Failed to update trip status:", error);

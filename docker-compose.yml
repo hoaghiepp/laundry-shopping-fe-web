@@ -1,0 +1,13 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        EXPO_PUBLIC_API_BASE_URL: ${EXPO_PUBLIC_API_BASE_URL:-}
+        EXPO_PUBLIC_API_PROXY_TARGET: ${EXPO_PUBLIC_API_PROXY_TARGET:-https://test.dhhcloud.io.vn}
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      EXPO_PUBLIC_API_PROXY_TARGET: ${EXPO_PUBLIC_API_PROXY_TARGET:-https://test.dhhcloud.io.vn}
+    restart: unless-stopped

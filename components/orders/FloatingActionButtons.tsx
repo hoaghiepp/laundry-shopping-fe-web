@@ -1,6 +1,6 @@
 import { FontAwesome5 } from "@expo/vector-icons";
 import React from "react";
-import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { ActivityIndicator, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 interface FloatingActionButtonsProps {
   selectedOrdersCount: number;
@@ -8,6 +8,8 @@ interface FloatingActionButtonsProps {
   hasSelectedBatch: boolean;
   onCreateBatch: () => void;
   onBatchShipment: () => void;
+  onPrintOrders?: () => void;
+  isPrintingOrders?: boolean;
   onConfirmGroupShipment?: () => void;
   showGroupConfirm?: boolean;
 }
@@ -20,6 +22,8 @@ export const FloatingActionButtons: React.FC<
   hasSelectedBatch,
   onCreateBatch,
   onBatchShipment,
+  onPrintOrders,
+  isPrintingOrders = false,
   onConfirmGroupShipment,
   showGroupConfirm = false,
 }) => {
@@ -29,7 +33,31 @@ export const FloatingActionButtons: React.FC<
 
   return (
     <>
-      {/* "Tạo lô" button - Right side (only show if non-batch orders are selected) */}
+      {selectedOrdersCount > 0 && onPrintOrders && (
+        <View style={styles.printButtonContainer}>
+          <TouchableOpacity
+            style={[styles.printOrdersButton, isPrintingOrders && styles.buttonDisabled]}
+            onPress={onPrintOrders}
+            activeOpacity={0.8}
+            disabled={isPrintingOrders}
+          >
+            <View style={styles.floatingButtonContent}>
+              <View style={styles.printOrdersBadge}>
+                <Text style={styles.printOrdersBadgeText}>
+                  {selectedOrdersCount}
+                </Text>
+              </View>
+              {isPrintingOrders ? (
+                <ActivityIndicator size="small" color="#2563EB" />
+              ) : (
+                <FontAwesome5 name="print" size={14} color="#2563EB" solid />
+              )}
+              <Text style={styles.printOrdersButtonText}>In đơn</Text>
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {selectedOrdersCount > 0 && (
         <View style={styles.floatingButtonContainer}>
           <TouchableOpacity
@@ -50,7 +78,6 @@ export const FloatingActionButtons: React.FC<
         </View>
       )}
 
-      {/* "Vận chuyển" button - Left side when batch is selected */}
       {hasSelectedBatch && (
         <View style={styles.floatingButtonContainerLeft} pointerEvents="box-none">
           <TouchableOpacity
@@ -76,7 +103,6 @@ export const FloatingActionButtons: React.FC<
         </View>
       )}
 
-      {/* Confirm Group Shipment Button */}
       {showGroupConfirm && onConfirmGroupShipment && (
         <View style={styles.floatingButtonContainer}>
           <TouchableOpacity
@@ -101,6 +127,49 @@ export const FloatingActionButtons: React.FC<
 };
 
 const styles = StyleSheet.create({
+  printButtonContainer: {
+    position: "absolute",
+    bottom: 76,
+    right: 16,
+    alignItems: "flex-end",
+    zIndex: 1000,
+    elevation: 10,
+  },
+  printOrdersButton: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: "#BFDBFE",
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.12,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  printOrdersButtonText: {
+    color: "#2563EB",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  printOrdersBadge: {
+    backgroundColor: "#DBEAFE",
+    borderRadius: 8,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  printOrdersBadgeText: {
+    color: "#1D4ED8",
+    fontSize: 10,
+    fontWeight: "700",
+  },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   floatingButtonContainer: {
     position: "absolute",
     bottom: 20,
@@ -185,4 +254,3 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
 });
-

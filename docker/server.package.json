@@ -1,0 +1,10 @@
+{
+  "name": "laundry-shopping-fe-server",
+  "private": true,
+  "dependencies": {
+    "@expo/server": "0.7.5",
+    "compression": "^1.8.0",
+    "express": "^4.21.2",
+    "morgan": "^1.10.0"
+  }
+}
