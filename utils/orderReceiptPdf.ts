@@ -27,13 +27,9 @@ function mmToPt(mm: number): number {
 /** Extra top inset so header text is not clipped on thermal printers / PDF viewers. */
 const TOP_PAD = mmToPt(8);
 
-/** QR column (smaller to leave room for product list on the left). */
-const QR_SIZE = mmToPt(20);
-const COL_GAP = mmToPt(2);
 const CONTENT_W = PAGE_W - 2 * MARGIN;
-const LEFT_COL_W = CONTENT_W - COL_GAP - QR_SIZE;
-const RIGHT_COL_X = PAGE_W - MARGIN - QR_SIZE;
-const LEFT_MAX_CHARS = Math.max(12, Math.floor(LEFT_COL_W / (BODY_SIZE * 0.52)));
+/** QR fills the full content width for a centered single-column layout. */
+const QR_SIZE = CONTENT_W;
 
 const MIN_PAGE_H_MM = 80;
 const MIN_PAGE_H = MIN_PAGE_H_MM * PT_PER_MM;
@@ -280,110 +276,28 @@ async function renderOrderReceiptIntoDoc(
   const qrDataUrl = `data:image/png;base64,${uint8ArrayToBase64(qrBytes)}`;
 
   const storeName = stripToReceiptAscii(options?.storeName || "LAUNDRY PRO").toUpperCase();
-  const items = (order.order_items ?? []) as Record<string, unknown>[];
 
   ctx.y = Math.max(ctx.y, contentStartY());
 
-  drawCenter(ctx, storeName, TITLE_SIZE, true, 2);
-  drawCenter(ctx, `MA DON: ${code}`, BODY_SIZE + 0.3, true, 2);
+  drawCenter(ctx, storeName, TITLE_SIZE * 1.6, true, 3);
+  drawCenter(ctx, `MA DON: ${code}`, TITLE_SIZE, true, 4);
 
-  const customer = order.shipping_full_name_snapshot;
-  const phone = order.shipping_phone_number_snapshot;
-  if (customer) drawCenter(ctx, customer, SUBTITLE_SIZE, false, 1);
-  if (phone) drawCenter(ctx, `DT: ${phone}`, SUBTITLE_SIZE, false, 2);
+  const qrX = MARGIN;
+  ensureSpace(ctx, QR_SIZE + mmToPt(14));
+  ctx.doc.addImage(qrDataUrl, "PNG", qrX, ctx.y, QR_SIZE, QR_SIZE);
+  ctx.y += QR_SIZE + mmToPt(2);
 
-  drawDashedRule(ctx);
-
-  const bodyStartY = ctx.y + mmToPt(2);
-  const qrCenterX = RIGHT_COL_X + QR_SIZE / 2;
-  const qrCaptionMaxChars = Math.max(8, Math.floor(QR_SIZE / (SUBTITLE_SIZE * 0.45)));
-  const estLeftH =
-    mmToPt(8 + Math.max(1, items.length) * 4.5 + (order.note ? 10 : 0));
-  const estRightH = QR_SIZE + mmToPt(12);
-  ensureSpace(ctx, bodyStartY - ctx.y + Math.max(estLeftH, estRightH) + mmToPt(4));
-
-  let leftY = drawLeftAt(
-    ctx.doc,
-    MARGIN,
-    bodyStartY,
-    LEFT_MAX_CHARS,
-    "TOM TAT SAN PHAM",
-    BODY_SIZE + 0.2,
-    true
-  );
-  leftY += mmToPt(1.5);
-
-  if (items.length === 0) {
-    leftY = drawLeftAt(
-      ctx.doc,
-      MARGIN,
-      leftY,
-      LEFT_MAX_CHARS,
-      "1. Don hang (chua co chi tiet)"
-    );
-  } else {
-    for (let idx = 0; idx < items.length; idx++) {
-      leftY = drawLeftAt(
-        ctx.doc,
-        MARGIN,
-        leftY,
-        LEFT_MAX_CHARS,
-        formatProductSummary(items[idx], idx + 1)
-      );
-    }
-  }
-
-  if (order.note) {
-    leftY += mmToPt(1);
-    leftY = drawLeftAt(
-      ctx.doc,
-      MARGIN,
-      leftY,
-      LEFT_MAX_CHARS,
-      `Ghi chu: ${stripToReceiptAscii(order.note)}`,
-      SUBTITLE_SIZE
-    );
-  }
-
-  let rightY = bodyStartY;
-  ctx.doc.addImage(qrDataUrl, "PNG", RIGHT_COL_X, rightY, QR_SIZE, QR_SIZE);
-  rightY += QR_SIZE + mmToPt(2);
-
-  rightY = drawCenterAt(
-    ctx.doc,
-    qrCenterX,
-    rightY,
-    "QUET MA QR",
-    SUBTITLE_SIZE,
-    false,
-    qrCaptionMaxChars,
-    1
-  );
-  rightY = drawCenterAt(
-    ctx.doc,
-    qrCenterX,
-    rightY,
-    code,
-    SUBTITLE_SIZE,
-    true,
-    qrCaptionMaxChars,
-    2
-  );
-
-  const bodyEndY = Math.max(leftY, rightY);
-  ensureSpace(ctx, bodyEndY - ctx.y + mmToPt(4));
-  ctx.y = bodyEndY;
+  drawCenter(ctx, code, TITLE_SIZE, true, 2);
 
   return ctx.y;
 }
 
-function estimateReceiptHeightMm(order: Order): number {
-  const items = order.order_items?.length ?? 0;
+function estimateReceiptHeightMm(_order: Order): number {
   const topPadMm = 8;
-  const headerMm = 34;
-  const leftBodyMm = 10 + Math.max(1, items) * 4.5 + (order.note ? 10 : 0);
-  const qrBodyMm = 20 + 10;
-  return topPadMm + headerMm + Math.max(leftBodyMm, qrBodyMm) + 6;
+  const headerMm = 20;
+  // QR fills the 80mm content width (minus margins = ~72mm), plus code label below
+  const qrBodyMm = (RECEIPT_WIDTH_MM - 8) + 10;
+  return topPadMm + headerMm + qrBodyMm + 8;
 }
 
 /**
