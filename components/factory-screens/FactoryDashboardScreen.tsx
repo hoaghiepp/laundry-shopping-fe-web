@@ -991,20 +991,24 @@ export const FactoryDashboardScreen: React.FC<FactoryDashboardScreenProps> = ({
 
                 const destinationHubId = hubIds[0];
 
-                // Build logistic_trip_items using tracking IDs
-                const logistic_trip_items = selectedIds
-                  .map((orderId) => {
-                    const trackingId = orderToTrackingMap[orderId];
-                    if (!trackingId) return null;
-                    return {
-                      type: LogisticTripItemType.BIN_OUTBOUND,
-                      service_item_tracking_id: trackingId,
-                    };
-                  })
-                  .filter(Boolean) as {
-                    type: LogisticTripItemType;
-                    service_item_tracking_id: string;
-                  }[];
+                const trackingResponse = await logisticService.searchTrackingItems(
+                  { current_store_id: factoryId },
+                  { page: 0, size: 1000 }
+                );
+                const selectedOrderIds = new Set(selectedIds);
+                const garmentRows = (trackingResponse?.data || []).filter((row: any) =>
+                  selectedOrderIds.has(row.order_id || row.orderId)
+                );
+                const logistic_trip_items = (
+                  garmentRows.length > 0
+                    ? garmentRows
+                    : selectedIds
+                        .map((orderId) => ({ id: orderToTrackingMap[orderId] }))
+                        .filter((row) => row.id)
+                ).map((row: any) => ({
+                  type: LogisticTripItemType.BIN_OUTBOUND,
+                  service_item_tracking_id: row.id,
+                }));
 
                 if (logistic_trip_items.length === 0) {
                   Alert.alert(

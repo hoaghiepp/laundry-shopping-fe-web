@@ -1,3 +1,4 @@
+import { ServiceSubItemsEditor } from "@/components/laundry/ServiceSubItemsEditor";
 import { ProductType } from "@/constants/enum";
 import { compatAlert } from "@/lib/compatAlert";
 import { ProductItem } from "@/models/model";
@@ -6,6 +7,19 @@ import { staffOrderService } from "@/services/api/staffOrderService";
 import { StoreAddress, storeService } from "@/services/api/storeService";
 import { StaffOrderCartDialog } from "@/components/screens/store/StaffOrderCartDialog";
 import { formatCurrencyVND } from "@/utils/format";
+import {
+  chargedLineAmount,
+  expandCheckoutIds,
+  groupLinesByParent,
+  mergeSubItemDrafts,
+  parentIdOf,
+  SubItemDraft,
+  subItemDisplayName,
+  subItemQuantitySum,
+  trimNote,
+  validateNote,
+  validateServiceSubItems,
+} from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -14,6 +28,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -32,6 +47,9 @@ interface CartEntry {
   product: ProductItem;
   quantity: number;
   cartItemId: string | null;
+  parentId: string | null;
+  displayName: string;
+  note?: string;
 }
 
 interface CheckoutForm {
@@ -129,6 +147,9 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [form, setForm] = useState<CheckoutForm>({ fullName: "", phone: "", note: "" });
+  const [subItemProduct, setSubItemProduct] = useState<ProductItem | null>(null);
+  const [subItemDrafts, setSubItemDrafts] = useState<SubItemDraft[]>([]);
+  const [parentNote, setParentNote] = useState("");
 
   // Load cart and store profile when store changes
   useEffect(() => {
@@ -180,14 +201,31 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
       await ensureCustomerOrderTokensFromStorage();
       const res = await staffOrderService.getCustomerCart();
       const items: any[] = res?.data?.cart_items ?? [];
-      setCart(
-        items
-          .filter((item: any) => item?.product)
-          .map((item: any) => ({
+      const mapped = items
+        .filter((item: any) => item?.product)
+        .map((item: any) => {
+          const parentId = parentIdOf(item);
+          const itemName = item.item_name || item.itemName || "";
+          return {
             product: item.product as ProductItem,
-            quantity: item.quantity,
-            cartItemId: item.id,
-          }))
+            quantity: Number(item.quantity) || 1,
+            cartItemId: item.id as string,
+            parentId,
+            displayName: parentId ? itemName || item.product.name : item.product.name,
+            note: item.note || undefined,
+          };
+        });
+      setCart(
+        groupLinesByParent(mapped).flatMap((group) => [
+          group.parent,
+          ...group.children.map((child) => ({
+            ...child,
+            displayName: subItemDisplayName(
+              child.displayName,
+              group.parent.product?.name || group.parent.displayName
+            ),
+          })),
+        ])
       );
     } catch {
       // silently ignore — cart stays as-is
@@ -233,22 +271,68 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
 
   const cartMap = useMemo(() => {
     const m: Record<string, CartEntry> = {};
-    cart.forEach((e) => { m[e.product.id] = e; });
+    cart.forEach((e) => {
+      if (!e.parentId) m[e.product.id] = e;
+    });
     return m;
   }, [cart]);
 
-  const totalItems = cart.reduce((s, e) => s + e.quantity, 0);
-  const totalPrice = cart.reduce((s, e) => s + e.product.price * e.quantity, 0);
+  const totalItems = cart.length;
+  const totalPrice = cart.reduce((sum, entry) => {
+    const hasChildren = cart.some((line) => line.parentId && line.parentId === entry.cartItemId);
+    return sum + chargedLineAmount(entry.product.price, entry.quantity, hasChildren);
+  }, 0);
 
   const setLoadingFor = (id: string, v: boolean) =>
     setItemLoading((prev) => ({ ...prev, [id]: v }));
 
+  const openSubItemEditor = (product: ProductItem) => {
+    setSubItemProduct(product);
+    setParentNote("");
+    setSubItemDrafts([{ key: `${Date.now()}`, name: "", quantity: 1, note: "" }]);
+  };
+
+  const submitSubItems = async () => {
+    if (!subItemProduct) return;
+    const merged = mergeSubItemDrafts(subItemDrafts);
+    const error = validateNote(parentNote) || validateServiceSubItems(subItemProduct.name, merged);
+    if (error) {
+      compatAlert("Chưa hợp lệ", error);
+      return;
+    }
+    const payload = merged.map((item) => ({
+      name: item.name.trim(),
+      quantity: item.quantity,
+      ...(trimNote(item.note) ? { note: trimNote(item.note) } : {}),
+    }));
+    const note = trimNote(parentNote);
+    setLoadingFor(subItemProduct.id, true);
+    try {
+      await staffOrderService.addToCart(
+        subItemProduct.id,
+        payload.length > 0 ? subItemQuantitySum(payload) : 1,
+        payload,
+        note
+      );
+      setSubItemProduct(null);
+      await syncCart();
+    } catch (e: any) {
+      compatAlert("Lỗi", e.message || "Không thể thêm vào giỏ");
+    } finally {
+      setLoadingFor(subItemProduct.id, false);
+    }
+  };
+
   const handleAdd = useCallback(async (product: ProductItem) => {
-    const existing = cart.find((e) => e.product.id === product.id);
+    if (product.type === ProductType.SERVICE) {
+      openSubItemEditor(product);
+      return;
+    }
+    const existing = cart.find((e) => e.product.id === product.id && !e.parentId);
     setLoadingFor(product.id, true);
     try {
-      if (existing) {
-        if (existing.cartItemId) await staffOrderService.updateCartItem(existing.cartItemId, existing.quantity + 1);
+      if (existing?.cartItemId) {
+        await staffOrderService.updateCartItem(existing.cartItemId, existing.quantity + 1);
       } else {
         await staffOrderService.addToCart(product.id, 1);
       }
@@ -261,8 +345,12 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
   }, [cart]);
 
   const handleDecrease = useCallback(async (product: ProductItem) => {
-    const existing = cart.find((e) => e.product.id === product.id);
+    const existing = cart.find((e) => e.product.id === product.id && !e.parentId);
     if (!existing) return;
+    if (cart.some((line) => line.parentId === existing.cartItemId)) {
+      compatAlert("Số lượng món", "Hãy sửa số lượng từng món trong giỏ hàng");
+      return;
+    }
     setLoadingFor(product.id, true);
     try {
       if (existing.cartItemId) {
@@ -280,22 +368,63 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
     }
   }, [cart]);
 
+  const changeEntryQuantity = useCallback(async (entry: CartEntry, nextQuantity: number) => {
+    if (!entry.cartItemId) return;
+    if (cart.some((line) => line.parentId === entry.cartItemId)) {
+      compatAlert("Số lượng món", "Số lượng dịch vụ bằng tổng từng món. Hãy sửa món con.");
+      return;
+    }
+    const loadingKey = entry.cartItemId;
+    setLoadingFor(loadingKey, true);
+    try {
+      if (nextQuantity < 1) {
+        await staffOrderService.removeCartItem(entry.cartItemId);
+      } else {
+        await staffOrderService.updateCartItem(entry.cartItemId, nextQuantity);
+      }
+      await syncCart();
+    } catch (e: any) {
+      compatAlert("Lỗi", e.message || "Không thể cập nhật giỏ");
+    } finally {
+      setLoadingFor(loadingKey, false);
+    }
+  }, [cart]);
+
+  const handleIncreaseEntry = useCallback(async (entry: CartEntry) => {
+    const hasChildren = cart.some((line) => line.parentId === entry.cartItemId);
+    if (hasChildren) {
+      openSubItemEditor(entry.product);
+      return;
+    }
+    await changeEntryQuantity(entry, entry.quantity + 1);
+  }, [cart, changeEntryQuantity]);
+
+  const handleDecreaseEntry = useCallback(async (entry: CartEntry) => {
+    await changeEntryQuantity(entry, entry.quantity - 1);
+  }, [changeEntryQuantity]);
+
   const handleRemoveEntry = useCallback(async (entry: CartEntry) => {
-    setLoadingFor(entry.product.id, true);
+    const loadingKey = entry.cartItemId || entry.product.id;
+    setLoadingFor(loadingKey, true);
     try {
       if (entry.cartItemId) await staffOrderService.removeCartItem(entry.cartItemId);
       await syncCart();
     } catch (e: any) {
       compatAlert("Lỗi", e.message || "Không thể xóa khỏi giỏ");
     } finally {
-      setLoadingFor(entry.product.id, false);
+      setLoadingFor(loadingKey, false);
     }
   }, []);
 
   const handleCheckout = async () => {
     if (!form.fullName.trim()) { compatAlert("Thiếu thông tin", "Vui lòng nhập tên khách hàng"); return; }
     if (!form.phone.trim()) { compatAlert("Thiếu thông tin", "Vui lòng nhập số điện thoại"); return; }
-    const cartItemIds = cart.filter((e) => e.cartItemId).map((e) => e.cartItemId as string);
+    const cartItemIds = expandCheckoutIds(
+      cart
+        .filter((e) => e.cartItemId)
+        .map((e) => ({ id: e.cartItemId as string, parentId: e.parentId })),
+      cart.filter((e) => e.cartItemId).map((e) => e.cartItemId as string)
+    );
     if (cartItemIds.length === 0) { compatAlert("Lỗi", "Giỏ hàng trống"); return; }
 
     setCheckoutLoading(true);
@@ -480,10 +609,37 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
           setShowCart(false);
           setShowCheckout(true);
         }}
-        onIncrease={handleAdd}
-        onDecrease={handleDecrease}
+        onIncrease={handleIncreaseEntry}
+        onDecrease={handleDecreaseEntry}
         onRemove={handleRemoveEntry}
       />
+
+      <Modal visible={!!subItemProduct} transparent animationType="fade" onRequestClose={() => setSubItemProduct(null)}>
+        <View style={subModal.overlay}>
+          <View style={subModal.card}>
+            <Text style={subModal.title}>{subItemProduct?.name}</Text>
+            <ScrollView>
+              {subItemProduct && (
+                <ServiceSubItemsEditor
+                  serviceName={subItemProduct.name}
+                  items={subItemDrafts}
+                  parentNote={parentNote}
+                  onParentNoteChange={setParentNote}
+                  onChange={setSubItemDrafts}
+                />
+              )}
+            </ScrollView>
+            <View style={subModal.actions}>
+              <TouchableOpacity onPress={() => setSubItemProduct(null)} style={subModal.cancel}>
+                <Text style={subModal.cancelText}>Hủy</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={submitSubItems} style={subModal.save}>
+                <Text style={subModal.saveText}>Thêm vào giỏ</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── Checkout — same inline dialog pattern ── */}
       {showCheckout && (
@@ -553,9 +709,9 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
                   <View style={co.summary}>
                     <Text style={co.summaryTitle}>Tóm tắt đơn hàng</Text>
                     {cart.map((e) => (
-                      <View key={e.product.id} style={co.row}>
+                      <View key={e.cartItemId || e.product.id} style={co.row}>
                         <Text style={co.rowName} numberOfLines={1}>
-                          {e.product.name} ×{e.quantity}
+                          {e.displayName} ×{e.quantity}
                         </Text>
                         <Text style={co.rowAmt}>{formatCurrencyVND(e.product.price * e.quantity)}</Text>
                       </View>
@@ -867,4 +1023,27 @@ const co = StyleSheet.create({
   divider: { height: 1, backgroundColor: "#E5E7EB", marginVertical: 8 },
   totalLabel: { fontSize: 14, fontWeight: "700", color: "#1F2937" },
   totalAmt: { fontSize: 15, fontWeight: "800", color: "#1E40AF" },
+});
+
+const subModal = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 16,
+  },
+  card: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 16,
+    width: "50%",
+    maxHeight: "80%",
+  },
+  title: { fontSize: 16, fontWeight: "700", color: "#111827" },
+  actions: { flexDirection: "row", justifyContent: "flex-end", gap: 8, marginTop: 12 },
+  cancel: { paddingHorizontal: 14, paddingVertical: 10 },
+  cancelText: { color: "#6B7280", fontWeight: "700" },
+  save: { backgroundColor: "#2563EB", borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
+  saveText: { color: "#FFFFFF", fontWeight: "700" },
 });

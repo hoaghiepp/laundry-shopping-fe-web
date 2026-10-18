@@ -35,7 +35,9 @@ export const getItemTypeDisplay = (type: string): string => {
     case 'BAG_OUTBOUND':
       return 'Bao tải đi';
     case 'BAG_INBOUND':
-      return 'Bao tải về';
+      return 'Bao đi xưởng';
+    case 'BIN_OUTBOUND':
+      return 'Thùng về cửa hàng';
     default:
       return type;
   }

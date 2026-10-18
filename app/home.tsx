@@ -49,6 +49,7 @@ import { promotionService } from "@/services/api/promotionService";
 import { storeService } from "@/services/api/storeService";
 import { cacheManager } from "@/services/cache";
 import { formatCurrencyVND } from "@/utils/format";
+import { expandCheckoutIds } from "@/utils/serviceLines";
 import { clearGlobalUserRole, getGlobalUserRole } from "@/utils/globalState";
 import { resetOrientationToPortrait } from "@/utils/orientation";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
@@ -211,9 +212,17 @@ export default function HomeScreen() {
       console.log("Cart items for checkout:", cartItems);
 
       // Extract cart item IDs from store items
-      const cartItemIds = cartItems
-        .filter((item: any) => item && item.cartItemId)
-        .map((item: any) => item.cartItemId);
+      const cartItemIds = expandCheckoutIds(
+        cartItems
+          .filter((item: any) => item && item.cartItemId)
+          .map((item: any) => ({
+            id: item.cartItemId as string,
+            parentId: (item.parentId as string | null) ?? null,
+          })),
+        cartItems
+          .filter((item: any) => item && item.cartItemId)
+          .map((item: any) => item.cartItemId as string)
+      );
 
       if (cartItemIds.length === 0) {
         Alert.alert(
@@ -279,16 +288,30 @@ export default function HomeScreen() {
     }
   };
 
-  const addProductToCart = async (product: ProductItem): Promise<any> => {
+  const addProductToCart = async (
+    product: ProductItem,
+    quantity = 1,
+    subItems?: { name: string; quantity: number; note?: string }[],
+    note?: string
+  ): Promise<any> => {
+    if (product.type === ProductType.SERVICE && subItems === undefined) {
+      setSelectedProduct(product);
+      setActiveScreen(ScreenType.PRODUCT_DETAIL);
+      return;
+    }
     try {
-      const res = await cartService.addItemToCart({
+      await cartService.addItemToCart({
         product_id: product.id,
-        quantity: 1,
+        quantity,
+        ...(note ? { note } : {}),
+        ...(subItems && subItems.length > 0 ? { sub_items: subItems } : {}),
       });
 
       Alert.alert("Thành công", `Đã thêm ${product.name} vào giỏ hàng`);
-    } catch (error) {
-      Alert.alert("Thất bại", `Thêm ${product.name} vào giỏ hàng thất bại`);
+      return true;
+    } catch (error: any) {
+      Alert.alert("Thất bại", error?.message || `Thêm ${product.name} vào giỏ hàng thất bại`);
+      return false;
     }
   };
 
@@ -861,7 +884,7 @@ export default function HomeScreen() {
         product={selectedProduct}
         loading={false}
         onBack={() => setActiveScreen(ScreenType.HOME)}
-        onAddToCart={(quantity) => {
+        onAddToCart={(quantity, subItems, note) => {
           if (selectedProduct) {
             // If it's a package, navigate to package purchase screen instead of adding to cart
             if (selectedProduct.type === "PACKAGE") {
@@ -886,15 +909,9 @@ export default function HomeScreen() {
                 ]
               );
             } else {
-              // For regular products, add to cart
-              const addMultiple = async () => {
-                for (let i = 0; i < quantity; i++) {
-                  await addProductToCart(selectedProduct);
-                }
-                // Alert.alert("Thành công", `Đã thêm ${quantity} ${selectedProduct.name} vào giỏ hàng`);
-                setActiveScreen(ScreenType.HOME);
-              };
-              addMultiple();
+              addProductToCart(selectedProduct, quantity, subItems, note).then((added) => {
+                if (added) setActiveScreen(ScreenType.HOME);
+              });
             }
           }
         }}

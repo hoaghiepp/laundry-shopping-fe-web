@@ -1,9 +1,17 @@
 import { userAxios } from "@/lib/apiClient";
 import { extractApiErrorMessage } from "./apiUtils";
 
+export interface CartSubItem {
+  name: string;
+  quantity: number;
+  note?: string;
+}
+
 export interface AddItemToCartRequest {
   product_id: string;
   quantity: number;
+  note?: string;
+  sub_items?: CartSubItem[];
 }
 
 export const cartService = {

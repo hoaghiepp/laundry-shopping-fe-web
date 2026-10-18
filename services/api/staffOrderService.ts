@@ -26,12 +26,20 @@ export const staffOrderService = {
     }
   },
 
-  addToCart: async (productId: string, quantity: number): Promise<any> => {
+  addToCart: async (
+    productId: string,
+    quantity: number,
+    subItems?: { name: string; quantity: number; note?: string }[],
+    note?: string
+  ): Promise<any> => {
     try {
-      const res = await customerOrderAxios.post(`${API_BASE_URL}/v1/customer/cart/items`, {
+      const body: Record<string, unknown> = {
         product_id: productId,
         quantity,
-      });
+      };
+      if (note) body.note = note;
+      if (subItems && subItems.length > 0) body.sub_items = subItems;
+      const res = await customerOrderAxios.post(`${API_BASE_URL}/v1/customer/cart/items`, body);
       return res.data;
     } catch (error) {
       throw new Error(extractApiErrorMessage(error, "Add to cart failed"));

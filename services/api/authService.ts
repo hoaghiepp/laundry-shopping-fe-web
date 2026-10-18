@@ -54,9 +54,13 @@ export function getLoginFailureMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
     const d = error.response?.data as Record<string, unknown> | undefined;
     const m =
-      (typeof d?.message === "string" && d.message) ||
-      (typeof d?.error_description === "string" && d.error_description) ||
-      (typeof d?.error === "string" && d.error);
+      typeof d?.message === "string"
+        ? d.message
+        : typeof d?.error_description === "string"
+          ? d.error_description
+          : typeof d?.error === "string"
+            ? d.error
+            : undefined;
     if (m?.trim()) return m.trim();
     if (error.message) return error.message;
   }

@@ -229,6 +229,22 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
     !showOutboundActions &&
     !!onScanInbound;
 
+  const tripItemsByOrder: { orderCode: string; items: any[] }[] = [];
+  const tripItemGroups = new Map<string, any[]>();
+  (tripDetails?.logistic_trip_items || []).forEach((item: any) => {
+    const orderCode =
+      item.order_code ||
+      item.orderCode ||
+      trackingIdToOrderCode.get(item.service_item_tracking_id) ||
+      "Chưa có mã đơn";
+    const list = tripItemGroups.get(orderCode) ?? [];
+    list.push(item);
+    tripItemGroups.set(orderCode, list);
+  });
+  tripItemGroups.forEach((items, orderCode) => {
+    tripItemsByOrder.push({ orderCode, items });
+  });
+
   return (
     <Modal
       visible={visible}
@@ -341,33 +357,34 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                     </Text>
                   </View>
                 )}
-                {tripDetails.logistic_trip_items &&
-                tripDetails.logistic_trip_items.length > 0 ? (
-                  tripDetails.logistic_trip_items.map((item: any, index: number) => {
-                    const orderCode = trackingIdToOrderCode.get(
-                      item.service_item_tracking_id
-                    );
-                    const barcode = trackingIdToBarcode?.get(
-                      item.service_item_tracking_id
-                    );
-                    const orderData = orderCode ? orderDataMap.get(orderCode) : undefined;
-                    return (
-                      <TripItemCard
-                        key={item.id}
-                        item={item}
-                        index={index}
-                        orderCode={orderCode}
-                        barcode={barcode}
-                        orderData={orderData}
-                        storeId={storeId || factoryId}
-                        onOrderPress={
-                          orderCode
-                            ? () => handleOrderPress(orderCode)
-                            : undefined
-                        }
-                      />
-                    );
-                  })
+                {tripItemsByOrder.length > 0 ? (
+                  tripItemsByOrder.map((group) => (
+                    <View key={group.orderCode} style={{ marginBottom: 12 }}>
+                      <Text style={styles.modalSectionTitle}>{group.orderCode}</Text>
+                      {group.items.map((item: any, index: number) => {
+                        const barcode =
+                          item.barcode ||
+                          trackingIdToBarcode?.get(item.service_item_tracking_id);
+                        const orderData = orderDataMap.get(group.orderCode);
+                        return (
+                          <TripItemCard
+                            key={item.id || `${group.orderCode}-${index}`}
+                            item={item}
+                            index={index}
+                            orderCode={group.orderCode}
+                            barcode={barcode}
+                            orderData={orderData}
+                            storeId={storeId || factoryId}
+                            onOrderPress={
+                              group.orderCode !== "Chưa có mã đơn"
+                                ? () => handleOrderPress(group.orderCode)
+                                : undefined
+                            }
+                          />
+                        );
+                      })}
+                    </View>
+                  ))
                 ) : (
                   <Text style={styles.modalEmptyText}>Chưa có hàng hóa</Text>
                 )}

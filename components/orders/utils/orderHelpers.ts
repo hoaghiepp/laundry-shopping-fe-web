@@ -2,6 +2,7 @@ import { OrderCardData } from "@/components/store/OrderCard";
 import { IncidentStatus, OrderStatus, PaymentStatus, ServiceOrderItemStatus } from "@/constants/enum";
 import { Order } from "@/services/api/orderService";
 import { formatCurrencyVND } from "@/utils/format";
+import { groupLinesByParent } from "@/utils/serviceLines";
 import { getPaymentStatusBadge } from "./orderUtils";
 
 export type OrderTab =
@@ -84,7 +85,12 @@ export const mapOrderItemsToCardItems = (
       })
     : orderItems;
 
-  return itemsToMap.map((item) => {
+  const ordered = groupLinesByParent(itemsToMap).flatMap((group) => [
+    group.parent,
+    ...group.children,
+  ]);
+
+  return ordered.map((item) => {
     // Determine icon based on product type
     const productType = item.product_type || item.type || "GOODS";
     const icon = productType === "SERVICE" ? "tshirt" : "box-open";

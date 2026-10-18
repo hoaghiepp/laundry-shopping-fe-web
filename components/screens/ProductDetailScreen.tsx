@@ -1,10 +1,20 @@
+import { ServiceSubItemsEditor } from "@/components/laundry/ServiceSubItemsEditor";
 import { ProductItem } from "@/models/model";
 import { formatCurrencyVND } from "@/utils/format";
+import {
+  mergeSubItemDrafts,
+  SubItemDraft,
+  subItemQuantitySum,
+  trimNote,
+  validateNote,
+  validateServiceSubItems,
+} from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import React, { useEffect, useState } from "react";
 import {
     ActivityIndicator,
+    Alert,
     BackHandler,
     Dimensions,
     Modal,
@@ -22,7 +32,11 @@ interface ProductDetailScreenProps {
   product: ProductItem | null;
   loading?: boolean;
   onBack: () => void;
-  onAddToCart: (quantity: number) => void;
+  onAddToCart: (
+    quantity: number,
+    subItems?: { name: string; quantity: number; note?: string }[],
+    note?: string
+  ) => void;
   onRegisterPackage: (packageId: string) => void;
 }
 
@@ -34,6 +48,8 @@ export const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({
   onRegisterPackage,
 }) => {
   const [quantity, setQuantity] = useState(1);
+  const [subItems, setSubItems] = useState<SubItemDraft[]>([]);
+  const [parentNote, setParentNote] = useState("");
   const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [showPackageConfirmDialog, setShowPackageConfirmDialog] = useState(false);
 
@@ -78,7 +94,28 @@ export const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({
   ].filter(Boolean);
 
   const handleAddToCart = () => {
-    onAddToCart(quantity);
+    if (product.type !== "SERVICE") {
+      onAddToCart(quantity);
+      return;
+    }
+    const merged = mergeSubItemDrafts(subItems);
+    const error = validateNote(parentNote) || validateServiceSubItems(product.name, merged);
+    if (error) {
+      Alert.alert("Chưa hợp lệ", error);
+      return;
+    }
+    const note = trimNote(parentNote);
+    const subItemsPayload = merged.map((item) => ({
+      name: item.name.trim(),
+      quantity: item.quantity,
+      ...(trimNote(item.note) ? { note: trimNote(item.note) } : {}),
+    }));
+    if (merged.length === 0) {
+      onAddToCart(quantity, [], note);
+      return;
+    }
+    setSubItems(merged);
+    onAddToCart(subItemQuantitySum(merged), subItemsPayload, note);
   };
 
   const handleRegisterPackage = () => {
@@ -291,12 +328,22 @@ export const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({
               </View>
             )}
           </View> */}
+
+          {product.type === "SERVICE" && (
+            <ServiceSubItemsEditor
+              serviceName={product.name}
+              items={subItems}
+              parentNote={parentNote}
+              onParentNoteChange={setParentNote}
+              onChange={setSubItems}
+            />
+          )}
         </View>
       </ScrollView>
 
       {/* Footer - Add to Cart or Register */}
       <View style={styles.footer}>
-        {product.type !== "PACKAGE" && (
+        {product.type !== "PACKAGE" && subItems.length === 0 && (
           <View style={styles.quantityControl}>
             <TouchableOpacity
               style={styles.quantityButton}
@@ -313,6 +360,11 @@ export const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({
             >
               <FontAwesome5 name="plus" size={12} color="#2563EB" />
             </TouchableOpacity>
+          </View>
+        )}
+        {product.type === "SERVICE" && subItems.length > 0 && (
+          <View style={styles.quantityControl}>
+            <Text style={styles.quantity}>{subItemQuantitySum(subItems)}</Text>
           </View>
         )}
         <TouchableOpacity

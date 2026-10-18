@@ -5,6 +5,7 @@ import { storeService } from "@/services/api";
 import { cartService } from "@/services/api/cartService";
 import { customerAddressService, CustomerProfile, customerService } from "@/services/api/customerService";
 import { formatCurrencyVND } from "@/utils/format";
+import { chargedLineAmount, groupLinesByParent, parentIdOf, subItemDisplayName } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as SecureStore from "@/lib/secureStorage";
@@ -14,6 +15,7 @@ import {
   Alert,
   Modal,
   RefreshControl,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -24,7 +26,9 @@ import {
 interface CartItem {
   id: string;
   cartItemId: string;
+  parentId: string | null;
   name: string;
+  note?: string;
   type: "SERVICE" | "GOODS";
   status?: string;
   stockQuantity?: number;
@@ -72,6 +76,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   const [storeInfos, setStoreInfos] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [heldNameId, setHeldNameId] = useState<string | null>(null);
   const [selectedAddress, setSelectedAddress] = useState<{
     id: string;
     full_name: string;
@@ -124,10 +129,15 @@ export const CartScreen: React.FC<CartScreenProps> = ({
 
       const mappedItems: CartItem[] = cartItems
         .filter((cartItem: any) => cartItem && cartItem.id && cartItem.product)
-        .map((cartItem: any) => ({
+        .map((cartItem: any) => {
+          const parentId = parentIdOf(cartItem);
+          const itemName = cartItem.item_name || cartItem.itemName || "";
+          return {
           id: cartItem.product?.id || cartItem.product_id || "",
           cartItemId: cartItem.id || "",
-          name: cartItem.product?.name || "",
+          parentId,
+          name: parentId ? itemName || cartItem.product?.name || "" : cartItem.product?.name || "",
+          note: cartItem.note || undefined,
           type: (cartItem.product?.type || "GOODS") as "SERVICE" | "GOODS",
           status: cartItem.product?.status,
           stockQuantity:
@@ -139,7 +149,13 @@ export const CartScreen: React.FC<CartScreenProps> = ({
           storeId: cartItem.product?.store_id || "",
           thumbnailUrl: cartItem.product?.thumbnail_url || undefined,
           packageDiscount: 0, // Can be calculated from packages if needed
-        }));
+        };
+        });
+      const byCartId = new Map(mappedItems.map((item) => [item.cartItemId, item]));
+      for (const item of mappedItems) {
+        if (!item.parentId) continue;
+        item.name = subItemDisplayName(item.name, byCartId.get(item.parentId)?.name);
+      }
 
       setItems(mappedItems);
     } catch (error: any) {
@@ -435,9 +451,22 @@ export const CartScreen: React.FC<CartScreenProps> = ({
             }
 
             // Always refresh UI by removing from local state
-            setItems((prev) =>
-              prev.filter((item) => item.cartItemId !== cartItem.cartItemId)
-            );
+            setItems((prev) => {
+              if (!cartItem.parentId) {
+                return prev.filter(
+                  (item) =>
+                    item.cartItemId !== cartItem.cartItemId &&
+                    item.parentId !== cartItem.cartItemId
+                );
+              }
+              const remaining = prev.filter((item) => item.cartItemId !== cartItem.cartItemId);
+              const sum = remaining
+                .filter((item) => item.parentId === cartItem.parentId)
+                .reduce((total, item) => total + item.quantity, 0);
+              return remaining.map((item) =>
+                item.cartItemId === cartItem.parentId ? { ...item, quantity: sum } : item
+              );
+            });
           },
         },
       ]
@@ -445,25 +474,47 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   };
 
   const handleUpdateQuantity = async (cartItemId: string, quantity: number) => {
-    // Optimistically update UI
+    const target = items.find((item) => item.cartItemId === cartItemId);
+    if (!target) return;
+    const children = items.filter((item) => item.parentId === cartItemId);
+    if (children.length > 0) {
+      const sum = children.reduce((total, item) => total + item.quantity, 0);
+      if (quantity !== sum) {
+        Alert.alert(
+          "Không đổi được số lượng",
+          "Số lượng dịch vụ bằng tổng từng món. Hãy sửa số lượng của món."
+        );
+        return;
+      }
+    }
+
     const previousItems = items;
     const newQuantity = Math.max(1, quantity);
     setItems(
-      items.map((item) =>
-        item.cartItemId === cartItemId
-          ? { ...item, quantity: newQuantity }
-          : item
-      )
+      items.map((item) => {
+        if (item.cartItemId === cartItemId) return { ...item, quantity: newQuantity };
+        if (target.parentId && item.cartItemId === target.parentId) {
+          const siblingSum = items
+            .filter((entry) => entry.parentId === target.parentId)
+            .reduce(
+              (total, entry) =>
+                total + (entry.cartItemId === cartItemId ? newQuantity : entry.quantity),
+              0
+            );
+          return { ...item, quantity: siblingSum };
+        }
+        return item;
+      })
     );
 
-    // Call API if handler provided
     if (onUpdateQuantity) {
       try {
         await onUpdateQuantity(cartItemId, newQuantity);
+        await fetchCart();
       } catch (error) {
-        // Revert on error
         setItems(previousItems);
         console.error("Error updating cart item:", error);
+        Alert.alert("Lỗi", "Không thể cập nhật số lượng");
       }
     }
   };
@@ -497,10 +548,16 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   };
 
   // Calculate subtotal for a store
-  const calculateStoreSubtotal = (storeItems: CartItem[]) => {
+  const calculateStoreTotals = (storeItems: CartItem[]) => {
+    const parentIds = new Set(storeItems.map((item) => item.parentId).filter(Boolean));
     return storeItems.reduce(
-      (sum, item) => sum + (item.price || 0) * (item.quantity || 1),
-      0
+      (totals, item) => {
+        const amount = chargedLineAmount(item.price, item.quantity, parentIds.has(item.cartItemId));
+        if (item.type === "SERVICE") totals.service += amount;
+        else totals.goods += amount;
+        return totals;
+      },
+      { service: 0, goods: 0 }
     );
   };
 
@@ -608,7 +665,8 @@ export const CartScreen: React.FC<CartScreenProps> = ({
           // Render grouped store cards
           Object.keys(groupedItems).map((storeId) => {
             const storeItems = groupedItems[storeId] || [];
-            const storeSubtotal = calculateStoreSubtotal(storeItems);
+            const storeTotals = calculateStoreTotals(storeItems);
+            const storeSubtotal = storeTotals.service + storeTotals.goods;
             const storeHasServices = hasServiceItems(storeItems);
             const hasOnlyGoods = storeItems.length > 0 && storeItems.every(item => item.type === "GOODS");
             const hasOnlyServices = storeItems.length > 0 && storeItems.every(item => item.type === "SERVICE");
@@ -670,89 +728,136 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                   </View>
                 )}
 
-                {storeItems.map((item, index) => (
-                  <View
-                    key={item.cartItemId || `cart-item-${index}`}
-                    style={styles.itemCard}
-                  >
-                    {item.thumbnailUrl ? (
-                      <Image
-                        source={{ uri: item.thumbnailUrl }}
-                        style={styles.itemImage}
-                        contentFit="cover"
-                      />
-                    ) : (
-                      <View
-                        style={[
-                          styles.itemIcon,
-                          { backgroundColor: getTypeIconBg(item.type) },
-                        ]}
-                      >
-                        <FontAwesome5
-                          name={getTypeIcon(item.type)}
-                          size={18}
-                          color={getTypeIconColor(item.type)}
-                        />
-                      </View>
-                    )}
-                    <View style={styles.itemInfo}>
-                      <View style={styles.itemHeader}>
-                        <Text style={styles.itemName} numberOfLines={2}>
-                          {item.name}
+                {groupLinesByParent(storeItems).map((group) => {
+                  const rows = [group.parent, ...group.children];
+                  const groupTotal = group.children.reduce(
+                    (sum, row) => sum + chargedLineAmount(row.price, row.quantity, false),
+                    0
+                  );
+                  return (
+                    <View key={group.parent.cartItemId}>
+                      {rows.map((item, index) => {
+                        const locked = index === 0 && group.children.length > 0;
+                        return (
+                          <View
+                            key={item.cartItemId || `cart-item-${index}`}
+                            style={[styles.itemCard, index > 0 && styles.childItemCard]}
+                          >
+                            {item.thumbnailUrl && index === 0 ? (
+                              <Image
+                                source={{ uri: item.thumbnailUrl }}
+                                style={styles.itemImage}
+                                contentFit="cover"
+                              />
+                            ) : (
+                              <View
+                                style={[
+                                  styles.itemIcon,
+                                  { backgroundColor: getTypeIconBg(item.type) },
+                                ]}
+                              >
+                                <FontAwesome5
+                                  name={getTypeIcon(item.type)}
+                                  size={18}
+                                  color={getTypeIconColor(item.type)}
+                                />
+                              </View>
+                            )}
+                            <View style={styles.itemInfo}>
+                              <View style={styles.itemHeader}>
+                                {index > 0 ? (
+                                  <TouchableOpacity
+                                    activeOpacity={1}
+                                    style={styles.itemNameHold}
+                                    onPressIn={() => setHeldNameId(item.cartItemId)}
+                                    onPressOut={() => setHeldNameId(null)}
+                                    {...(Platform.OS === "web"
+                                      ? {
+                                          onMouseEnter: () => setHeldNameId(item.cartItemId),
+                                          onMouseLeave: () => setHeldNameId(null),
+                                        }
+                                      : {})}
+                                  >
+                                    <Text
+                                      style={styles.itemName}
+                                      numberOfLines={heldNameId === item.cartItemId ? undefined : 1}
+                                      ellipsizeMode="tail"
+                                    >
+                                      {item.name}
+                                    </Text>
+                                  </TouchableOpacity>
+                                ) : (
+                                  <Text style={styles.itemName} numberOfLines={2}>
+                                    {item.name}
+                                  </Text>
+                                )}
+                                {item.note ? (
+                                  <Text style={styles.itemType} numberOfLines={2}>{item.note}</Text>
+                                ) : null}
+                                <TouchableOpacity
+                                  onPress={() => handleRemoveItem(item)}
+                                  activeOpacity={1}
+                                >
+                                  <FontAwesome5 name="trash" size={14} color="#D1D5DB" />
+                                </TouchableOpacity>
+                              </View>
+                              <Text style={styles.itemType}>
+                                {getTypeLabel(item.type || "GOODS")}
+                              </Text>
+                              <View style={styles.itemFooter}>
+                                <View style={styles.itemPriceContainer}>
+                                  {locked ? null : (
+                                    <Text style={styles.itemPrice}>
+                                      {formatCurrencyVND(chargedLineAmount(item.price, item.quantity, false))}
+                                    </Text>
+                                  )}
+                                </View>
+                                <View style={styles.quantityControl}>
+                                  {locked ? (
+                                    <Text style={styles.quantity}>{item.quantity || 0}</Text>
+                                  ) : (
+                                    <>
+                                      <TouchableOpacity
+                                        onPress={() =>
+                                          handleUpdateQuantity(
+                                            item.cartItemId,
+                                            Math.max(1, (item.quantity || 1) - 1)
+                                          )
+                                        }
+                                        activeOpacity={1}
+                                        style={styles.quantityButtonContainer}
+                                      >
+                                        <FontAwesome5 name="minus" size={10} color="#6B7280" />
+                                      </TouchableOpacity>
+                                      <Text style={styles.quantity}>{item.quantity || 1}</Text>
+                                      <TouchableOpacity
+                                        onPress={() =>
+                                          handleUpdateQuantity(
+                                            item.cartItemId,
+                                            (item.quantity || 1) + 1
+                                          )
+                                        }
+                                        activeOpacity={1}
+                                        style={styles.quantityButtonContainer}
+                                      >
+                                        <FontAwesome5 name="plus" size={10} color="#2563EB" />
+                                      </TouchableOpacity>
+                                    </>
+                                  )}
+                                </View>
+                              </View>
+                            </View>
+                          </View>
+                        );
+                      })}
+                      {group.children.length > 0 && (
+                        <Text style={styles.groupTotal}>
+                          Tổng dịch vụ {formatCurrencyVND(groupTotal)}
                         </Text>
-                        <TouchableOpacity
-                          onPress={() => handleRemoveItem(item)}
-                          activeOpacity={1}
-                        >
-                          <FontAwesome5
-                            name="trash"
-                            size={14}
-                            color="#D1D5DB"
-                          />
-                        </TouchableOpacity>
-                      </View>
-                      <Text style={styles.itemType}>
-                        {getTypeLabel(item.type || "GOODS")}
-                      </Text>
-                      <View style={styles.itemFooter}>
-                        <View style={styles.itemPriceContainer}>
-                          <Text style={styles.itemPrice}>
-                            {formatCurrencyVND(item.price * item.quantity || 0)}
-                          </Text>
-                        </View>
-                        <View style={styles.quantityControl}>
-                          <TouchableOpacity
-                            onPress={() =>
-                              handleUpdateQuantity(
-                                item.cartItemId,
-                                Math.max(1, (item.quantity || 1) - 1)
-                              )
-                            }
-                            activeOpacity={1}
-                            style={styles.quantityButtonContainer}
-                          >
-                            <FontAwesome5 name="minus" size={10} color="#6B7280" />
-                          </TouchableOpacity>
-                          <Text style={styles.quantity}>
-                            {item.quantity || 1}
-                          </Text>
-                          <TouchableOpacity
-                            onPress={() =>
-                              handleUpdateQuantity(
-                                item.cartItemId,
-                                (item.quantity || 1) + 1
-                              )
-                            }
-                            activeOpacity={1}
-                            style={styles.quantityButtonContainer}
-                          >
-                            <FontAwesome5 name="plus" size={10} color="#2563EB" />
-                          </TouchableOpacity>
-                        </View>
-                      </View>
+                      )}
                     </View>
-                  </View>
-                ))}
+                  );
+                })}
 
                 {/* Pickup method selection - only show if store has service items */}
                 {storeHasServices && (
@@ -818,15 +923,27 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                 {/* Store subtotal and order button */}
                 <View style={styles.storeSummaryCard}>
                   <View style={styles.storeSummaryRow}>
+                    <Text style={styles.storeSummaryLabel}>Dịch vụ</Text>
+                    <Text style={styles.storeSummaryValue}>
+                      {formatCurrencyVND(storeTotals.service)}
+                    </Text>
+                  </View>
+                  <View style={styles.storeSummaryRow}>
+                    <Text style={styles.storeSummaryLabel}>Hàng hóa</Text>
+                    <Text style={styles.storeSummaryValue}>
+                      {formatCurrencyVND(storeTotals.goods)}
+                    </Text>
+                  </View>
+                  <View style={styles.storeSummaryRow}>
                     <Text style={styles.storeSummaryLabel}>Tạm tính</Text>
                     <Text style={styles.storeSummaryValue}>
-                      {storeSubtotal.toLocaleString()}đ
+                      {formatCurrencyVND(storeSubtotal)}
                     </Text>
                   </View>
                   <View style={styles.storeSummaryRowFinal}>
                     <Text style={styles.storeSummaryLabelFinal}>Thành tiền</Text>
                     <Text style={styles.storeSummaryValueFinal}>
-                      {storeSubtotal.toLocaleString()}đ
+                      {formatCurrencyVND(storeSubtotal)}
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -1232,6 +1349,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#6B7280",
   },
+  childItemCard: {
+    marginLeft: 20,
+    backgroundColor: "#F8FAFC",
+  },
+  groupTotal: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#1E40AF",
+    marginTop: -8,
+    marginBottom: 16,
+    textAlign: "right",
+  },
   itemCard: {
     backgroundColor: "#FFFFFF",
     padding: 16,
@@ -1262,6 +1391,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: 4,
   },
+  itemNameHold: { flex: 1, minWidth: 0 },
   itemName: {
     fontSize: 16,
     fontWeight: "700",

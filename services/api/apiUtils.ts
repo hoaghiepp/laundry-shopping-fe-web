@@ -4,7 +4,14 @@ import * as SecureStore from "@/lib/secureStorage";
 
 export function extractApiErrorMessage(error: unknown, fallback: string) {
   if (axios.isAxiosError(error)) {
-    return error.response?.data?.meta?.message || fallback;
+    const meta = error.response?.data?.meta;
+    const code = String(meta?.code ?? "");
+    if (!meta?.message && (code === "400040" || code === "400041")) {
+      return code === "400040"
+        ? "Chỉ dịch vụ mới có món chi tiết"
+        : "Số lượng dịch vụ phải bằng tổng số lượng từng món";
+    }
+    return meta?.message || fallback;
   }
   return fallback;
 }

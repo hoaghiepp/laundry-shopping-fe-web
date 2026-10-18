@@ -78,10 +78,7 @@ export const GenericQRScannerScreen: React.FC<GenericQRScannerScreenProps> = ({
     
     try {
       const trackingResponse = await logisticService.searchTrackingItems(
-        {
-          barcode: barcode,
-          current_store_id: hubId,
-        },
+        { barcode },
         { page: 0, size: 1 }
       );
       

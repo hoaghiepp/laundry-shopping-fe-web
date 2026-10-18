@@ -13,11 +13,18 @@ export interface TrackingItem {
 export interface SearchTrackingItemsRequest {
   barcode?: string;
   order_id?: string;
+  order_code?: string;
+  trip_id?: string;
   status?: string;
   current_store_id?: string;
   current_container_id?: string;
   current_batch_id?: string;
   factory_id?: string;
+}
+
+export interface ScanTrackingItemRequest {
+  status: string;
+  current_container_id?: string;
 }
 
 export interface CreateBatchRequest extends Array<TrackingItem> {}
@@ -77,6 +84,26 @@ export const logisticService = {
       data,
       {
         params: pagination,
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+    return response.data;
+  },
+
+  scanTrackingItem: async (
+    barcode: string,
+    data: ScanTrackingItemRequest
+  ): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("Token not found");
+    }
+    const response = await userAxios.patch(
+      `${API_BASE_URL}/v1/staff/item-tracking/scan/${encodeURIComponent(barcode)}`,
+      data,
+      {
         headers: {
           Authorization: `Bearer ${token}`,
         },

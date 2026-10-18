@@ -12,6 +12,7 @@ import {
 import { storeMainContentPaddingTop } from "@/constants/storeWebLayout";
 import { compatAlert } from "@/lib/compatAlert";
 import { AddressLocation, goshipService } from "@/services/api/goshipService";
+import { logisticService } from "@/services/api/logisticService";
 import { Order, orderService } from "@/services/api/orderService";
 import { storeService } from "@/services/api/storeService";
 import { formatCurrencyVND } from "@/utils/format";
@@ -20,6 +21,13 @@ import {
   resolveOrderReceiptOptions,
   saveOrDownloadReceiptPdf,
 } from "@/utils/orderReceiptPdf";
+import {
+  garmentsForOrderItem,
+  groupLinesByParent,
+  lineAmount,
+  parentIdOf,
+  serviceLineStatusLabel
+} from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
 import {
@@ -54,31 +62,38 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 }) => {
   const [retailChecked, setRetailChecked] = useState(false);
   const [actualWeights, setActualWeights] = useState<Record<string, string>>(
-    {}
+    {},
   );
   const [orderInfo, setOrderInfo] = useState<Order>(initialOrder);
   const [processingIncidents, setProcessingIncidents] = useState<Set<string>>(
-    new Set()
+    new Set(),
   );
 
   const [retailItems, setRetailItems] = useState<any[]>([]);
   const [serviceItems, setServiceItems] = useState<any[]>([]);
+  const [garments, setGarments] = useState<any[]>([]);
   const [serviceFee, setServiceFee] = useState<string>("");
   const [serviceFeeDisplay, setServiceFeeDisplay] = useState<string>("");
   const [isChangesConfirmed, setIsChangesConfirmed] = useState(false);
   const [goodsAdditionalFee, setGoodsAdditionalFee] = useState<string>("");
-  const [goodsAdditionalFeeDisplay, setGoodsAdditionalFeeDisplay] = useState<string>("");
+  const [goodsAdditionalFeeDisplay, setGoodsAdditionalFeeDisplay] =
+    useState<string>("");
   const [serviceAdditionalFee, setServiceAdditionalFee] = useState<string>("");
-  const [serviceAdditionalFeeDisplay, setServiceAdditionalFeeDisplay] = useState<string>("");
+  const [serviceAdditionalFeeDisplay, setServiceAdditionalFeeDisplay] =
+    useState<string>("");
   const [isGoodsFeeConfirmed, setIsGoodsFeeConfirmed] = useState(true);
   const [isServiceFeeConfirmed, setIsServiceFeeConfirmed] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
 
   // Return shipping modal state
   const [showReturnShippingModal, setShowReturnShippingModal] = useState(false);
-  const [returnShippingCarriers, setReturnShippingCarriers] = useState<Carrier[]>([]);
+  const [returnShippingCarriers, setReturnShippingCarriers] = useState<
+    Carrier[]
+  >([]);
   const [returnShippingRates, setReturnShippingRates] = useState<any[]>([]);
-  const [selectedReturnCarrierId, setSelectedReturnCarrierId] = useState<string | null>(null);
+  const [selectedReturnCarrierId, setSelectedReturnCarrierId] = useState<
+    string | null
+  >(null);
   const [fetchingReturnRates, setFetchingReturnRates] = useState(false);
   const [isCreatingShipment, setIsCreatingShipment] = useState(false);
   const [returnShippingParcel, setReturnShippingParcel] = useState({
@@ -203,6 +218,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         return 1; // Tiếp nhận
       case ServiceOrderItemStatus.AT_FACTORY:
       case ServiceOrderItemStatus.WASHING:
+      case ServiceOrderItemStatus.WASHED:
         return 2; // Xử lý
       case ServiceOrderItemStatus.DELIVERING:
         return 3; // Xác nhận
@@ -240,9 +256,9 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       "Tiếp nhận": "Xác nhận tiếp nhận",
       "Xử lý": "Xác nhận xử lý",
       "Xác nhận": "Xác nhận hoàn tất",
-      "Trả": "Xác nhận trả hàng",
+      Trả: "Xác nhận trả hàng",
       "Đang xử lý": "Xác nhận đóng hàng",
-      "Giao": "Xác nhận giao hàng",
+      Giao: "Xác nhận giao hàng",
     };
 
     return buttonTextMap[stepLabel] || `Xác nhận ${stepLabel.toLowerCase()}`;
@@ -294,6 +310,8 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         return "Ở Xưởng";
       case ServiceOrderItemStatus.WASHING:
         return "Đang giặt";
+      case ServiceOrderItemStatus.WASHED:
+        return "Đã giặt";
       case ServiceOrderItemStatus.DELIVERING:
         return "Đang giao";
       case ServiceOrderItemStatus.RETURNED:
@@ -333,7 +351,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   function getItemsBy(productType: ProductType): any[] {
     return (
       orderInfo.order_items?.filter(
-        (item) => (item.product_type as ProductType) === productType
+        (item) => (item.product_type as ProductType) === productType,
       ) || []
     );
   }
@@ -343,7 +361,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       "Fetching order details for",
       initialOrder.code,
       "in store",
-      storeId
+      storeId,
     );
     try {
       const response = await orderService.searchStoreOrders(
@@ -353,7 +371,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           fetch_order_items: true,
           fetch_incidents: true,
         },
-        { page: 0, size: 10 }
+        { page: 0, size: 10 },
       );
 
       setOrderInfo(response.data[0]);
@@ -367,6 +385,23 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     setOrderInfo(initialOrder);
     fetchOrderDetails();
   }, [initialOrder.code]);
+
+  useEffect(() => {
+    const orderCode = orderInfo?.code;
+    if (!orderCode) return;
+    let cancelled = false;
+    logisticService
+      .searchTrackingItems({ order_code: orderCode }, { page: 0, size: 200 })
+      .then((response) => {
+        if (!cancelled) setGarments(response?.data || []);
+      })
+      .catch(() => {
+        if (!cancelled) setGarments([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderInfo?.code]);
 
   // Update item lists when orderInfo changes
   useEffect(() => {
@@ -496,7 +531,9 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     } catch (error: unknown) {
       console.error("Error generating receipt PDF:", error);
       const msg =
-        error instanceof Error ? error.message : "Không thể tạo file PDF. Vui lòng thử lại.";
+        error instanceof Error
+          ? error.message
+          : "Không thể tạo file PDF. Vui lòng thử lại.";
       compatAlert("Lỗi", msg);
     }
   };
@@ -510,7 +547,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           text: "OK",
           onPress: onBack,
         },
-      ]
+      ],
     );
   };
 
@@ -522,7 +559,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   const updateOrderStatus = async (
     stepLabel: string,
     stepType: "retail" | "service",
-    serviceFee?: string
+    serviceFee?: string,
   ) => {
     // Build updated_items from actualWeights for service items
     const updatedItems = serviceItems
@@ -622,7 +659,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             };
           }
           return item;
-        })
+        }),
       );
       setIsChangesConfirmed(true);
     } else {
@@ -651,12 +688,16 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           const orderItemId = item.id ?? "";
           // Use actualWeight if available, otherwise use adjust_quantity, otherwise use quantity
           const actualWeight = actualWeights[orderItemId];
-          const weightValue = actualWeight !== undefined && actualWeight !== ""
-            ? parseFloat(actualWeight)
-            : (item.adjust_quantity ?? item.quantity ?? 0);
+          const weightValue =
+            actualWeight !== undefined && actualWeight !== ""
+              ? parseFloat(actualWeight)
+              : (item.adjust_quantity ?? item.quantity ?? 0);
           return {
             order_item_id: orderItemId,
-            quantity: typeof weightValue === 'number' ? weightValue : parseFloat(String(weightValue)) || 0,
+            quantity:
+              typeof weightValue === "number"
+                ? weightValue
+                : parseFloat(String(weightValue)) || 0,
           };
         })
         .filter((item) => item.quantity > 0); // Only include items with valid quantity
@@ -682,7 +723,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       }
 
       // Add goods additional_fee if confirmed
-      if (isGoodsFeeConfirmed && goodsAdditionalFee && goodsAdditionalFee !== "") {
+      if (
+        isGoodsFeeConfirmed &&
+        goodsAdditionalFee &&
+        goodsAdditionalFee !== ""
+      ) {
         const feeValue = parseFloat(goodsAdditionalFee);
         if (!isNaN(feeValue) && feeValue > 0) {
           requestBody.product_additional_fee = feeValue;
@@ -690,7 +735,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       }
 
       // Add service additional_fee if confirmed
-      if (isServiceFeeConfirmed && serviceAdditionalFee && serviceAdditionalFee !== "") {
+      if (
+        isServiceFeeConfirmed &&
+        serviceAdditionalFee &&
+        serviceAdditionalFee !== ""
+      ) {
         const feeValue = parseFloat(serviceAdditionalFee);
         if (!isNaN(feeValue) && feeValue > 0) {
           requestBody.service_additional_fee = feeValue;
@@ -745,7 +794,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 
   // Fetch return shipping rates
   const handleFetchReturnRates = async () => {
-    if (!storeAddress || !orderInfo.shipping_province_snapshot || !orderInfo.shipping_district_snapshot) {
+    if (
+      !storeAddress ||
+      !orderInfo.shipping_province_snapshot ||
+      !orderInfo.shipping_district_snapshot
+    ) {
       compatAlert("Lỗi", "Thiếu thông tin địa chỉ");
       return;
     }
@@ -758,15 +811,22 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     const weightNum = parseFloat(returnShippingParcel.weight) || 0;
 
     if (widthNum <= 0 || heightNum <= 0 || lengthNum <= 0 || weightNum <= 0) {
-      compatAlert('Lỗi', 'Vui lòng nhập đầy đủ thông tin kích thước và trọng lượng');
+      compatAlert(
+        "Lỗi",
+        "Vui lòng nhập đầy đủ thông tin kích thước và trọng lượng",
+      );
       return;
     }
 
     setFetchingReturnRates(true);
     try {
       // Source address: Store address (from store profile)
-      const storeAddr = typeof storeAddress === 'string' ? null : storeAddress;
-      if (!storeAddr || (!storeAddr.district_id && !storeAddr.district) || (!storeAddr.province_id && !storeAddr.province)) {
+      const storeAddr = typeof storeAddress === "string" ? null : storeAddress;
+      if (
+        !storeAddr ||
+        (!storeAddr.district_id && !storeAddr.district) ||
+        (!storeAddr.province_id && !storeAddr.province)
+      ) {
         compatAlert("Lỗi", "Không thể lấy địa chỉ cửa hàng");
         setFetchingReturnRates(false);
         return;
@@ -774,8 +834,8 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 
       const sourceAddress: AddressLocation = {
         // Prefer IDs over names for API compatibility
-        district: storeAddr.district_id || storeAddr.district || '',
-        city: storeAddr.province_id || storeAddr.province || '',
+        district: storeAddr.district_id || storeAddr.district || "",
+        city: storeAddr.province_id || storeAddr.province || "",
         ward: storeAddr.ward_id || storeAddr.ward,
       };
 
@@ -783,9 +843,17 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       // Note: shipping_*_snapshot fields may contain names or IDs
       // The API should accept both, but we'll use them as-is
       const destinationAddress: AddressLocation = {
-        district: orderInfo.shipping_district_id_snapshot || orderInfo.shipping_district_snapshot || '',
-        city: orderInfo.shipping_province_id_snapshot || orderInfo.shipping_province_snapshot || '',
-        ward: orderInfo.shipping_ward_id_snapshot || orderInfo.shipping_ward_snapshot,
+        district:
+          orderInfo.shipping_district_id_snapshot ||
+          orderInfo.shipping_district_snapshot ||
+          "",
+        city:
+          orderInfo.shipping_province_id_snapshot ||
+          orderInfo.shipping_province_snapshot ||
+          "",
+        ward:
+          orderInfo.shipping_ward_id_snapshot ||
+          orderInfo.shipping_ward_snapshot,
       };
 
       const request = {
@@ -813,23 +881,46 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         // Store original rates data for shipment creation
         setReturnShippingRates(ratesData);
 
-        const carriersList: Carrier[] = ratesData.map((rate: any, index: number) => ({
-          id: rate.id || rate.carrier_id || rate.carrier?.id || `carrier-${index}`,
-          name: rate.carrier_name || rate.name || rate.carrier?.name || `Đơn vị vận chuyển ${index + 1}`,
-          description: rate.service_name || rate.service?.name || rate.description || rate.expected,
-          estimatedTime: rate.estimated_delivery_time || rate.estimated_time || rate.delivery_time || rate.expected,
-          price: rate.total_fee || rate.fee || rate.price || rate.shipping_fee || 0,
-          carrier_logo: rate.carrier_logo || null,
-        }));
+        const carriersList: Carrier[] = ratesData.map(
+          (rate: any, index: number) => ({
+            id:
+              rate.id ||
+              rate.carrier_id ||
+              rate.carrier?.id ||
+              `carrier-${index}`,
+            name:
+              rate.carrier_name ||
+              rate.name ||
+              rate.carrier?.name ||
+              `Đơn vị vận chuyển ${index + 1}`,
+            description:
+              rate.service_name ||
+              rate.service?.name ||
+              rate.description ||
+              rate.expected,
+            estimatedTime:
+              rate.estimated_delivery_time ||
+              rate.estimated_time ||
+              rate.delivery_time ||
+              rate.expected,
+            price:
+              rate.total_fee ||
+              rate.fee ||
+              rate.price ||
+              rate.shipping_fee ||
+              0,
+            carrier_logo: rate.carrier_logo || null,
+          }),
+        );
         setReturnShippingCarriers(carriersList);
       } else {
-        compatAlert('Thông báo', 'Không tìm thấy đơn vị vận chuyển phù hợp');
+        compatAlert("Thông báo", "Không tìm thấy đơn vị vận chuyển phù hợp");
         setReturnShippingCarriers([]);
         setReturnShippingRates([]);
       }
     } catch (error: any) {
-      console.error('Failed to fetch return rates:', error);
-      compatAlert('Lỗi', error.message || 'Không thể lấy báo giá vận chuyển');
+      console.error("Failed to fetch return rates:", error);
+      compatAlert("Lỗi", error.message || "Không thể lấy báo giá vận chuyển");
       setReturnShippingCarriers([]);
       setReturnShippingRates([]);
     } finally {
@@ -844,7 +935,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       return;
     }
 
-    if (!storeAddress || !orderInfo.shipping_province_snapshot || !orderInfo.shipping_district_snapshot) {
+    if (
+      !storeAddress ||
+      !orderInfo.shipping_province_snapshot ||
+      !orderInfo.shipping_district_snapshot
+    ) {
       compatAlert("Lỗi", "Thiếu thông tin địa chỉ");
       return;
     }
@@ -853,17 +948,23 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       setIsCreatingShipment(true);
       // Find the selected rate
       const selectedRate = returnShippingRates.find(
-        (rate: any) => rate.id === selectedReturnCarrierId || rate.carrier_id === selectedReturnCarrierId
+        (rate: any) =>
+          rate.id === selectedReturnCarrierId ||
+          rate.carrier_id === selectedReturnCarrierId,
       );
 
       if (!selectedRate || !selectedRate.id) {
-        compatAlert("Lỗi", "Không tìm thấy thông tin đơn vị vận chuyển đã chọn");
+        compatAlert(
+          "Lỗi",
+          "Không tìm thấy thông tin đơn vị vận chuyển đã chọn",
+        );
         return;
       }
 
       // Prepare parcel data
       const codNum = parseFloat(returnShippingParcel.cod) || 0;
-      const amountNum = parseFloat(returnShippingParcel.amount) || orderInfo.final_total || 0;
+      const amountNum =
+        parseFloat(returnShippingParcel.amount) || orderInfo.final_total || 0;
       const widthNum = parseFloat(returnShippingParcel.width) || 0;
       const heightNum = parseFloat(returnShippingParcel.height) || 0;
       const lengthNum = parseFloat(returnShippingParcel.length) || 0;
@@ -874,8 +975,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       const storeProfile = storeProfileResponse.data;
 
       // Prepare store address (from)
-      const storeAddr = typeof storeAddress === 'string' ? null : storeAddress;
-      if (!storeAddr || (!storeAddr.district_id && !storeAddr.district) || (!storeAddr.province_id && !storeAddr.province)) {
+      const storeAddr = typeof storeAddress === "string" ? null : storeAddress;
+      if (
+        !storeAddr ||
+        (!storeAddr.district_id && !storeAddr.district) ||
+        (!storeAddr.province_id && !storeAddr.province)
+      ) {
         compatAlert("Lỗi", "Không thể lấy địa chỉ cửa hàng");
         return;
       }
@@ -894,9 +999,18 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         name: orderInfo.shipping_full_name_snapshot,
         phone: orderInfo.shipping_phone_number_snapshot,
         street: orderInfo.shipping_address_detail_snapshot || "",
-        ward: orderInfo.shipping_ward_id_snapshot || orderInfo.shipping_ward_snapshot || "",
-        district: orderInfo.shipping_district_id_snapshot || orderInfo.shipping_district_snapshot || "",
-        city: orderInfo.shipping_province_id_snapshot || orderInfo.shipping_province_snapshot || "",
+        ward:
+          orderInfo.shipping_ward_id_snapshot ||
+          orderInfo.shipping_ward_snapshot ||
+          "",
+        district:
+          orderInfo.shipping_district_id_snapshot ||
+          orderInfo.shipping_district_snapshot ||
+          "",
+        city:
+          orderInfo.shipping_province_id_snapshot ||
+          orderInfo.shipping_province_snapshot ||
+          "",
       };
 
       // Create shipment request
@@ -917,14 +1031,15 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           },
         },
       };
-      console.log('shipmentRequest', shipmentRequest);
+      console.log("shipmentRequest", shipmentRequest);
 
       // Create shipment via goshipService
-      const shipmentResponse = await goshipService.createShipment(shipmentRequest);
+      const shipmentResponse =
+        await goshipService.createShipment(shipmentRequest);
 
       compatAlert(
         "Thành công",
-        `Đã tạo đơn vận chuyển thành công.\nMã vận đơn: ${shipmentResponse.tracking_number || 'N/A'}`
+        `Đã tạo đơn vận chuyển thành công.\nMã vận đơn: ${shipmentResponse.tracking_number || "N/A"}`,
       );
 
       setShowReturnShippingModal(false);
@@ -979,21 +1094,21 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
               compatAlert(
                 "Thành công",
                 "Đơn hàng đã được cập nhật hoàn thành.",
-                [{ text: "OK", onPress: () => onBack() }]
+                [{ text: "OK", onPress: () => onBack() }],
               );
             } catch (error) {
               console.error(
                 "Error completing order via store transport:",
-                error
+                error,
               );
               compatAlert(
                 "Lỗi",
-                "Không thể cập nhật trạng thái đơn hàng. Vui lòng thử lại."
+                "Không thể cập nhật trạng thái đơn hàng. Vui lòng thử lại.",
               );
             }
           },
         },
-      ]
+      ],
     );
   };
 
@@ -1042,7 +1157,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             }
           },
         },
-      ]
+      ],
     );
   };
 
@@ -1104,106 +1219,163 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             {/* Section header – always show warning icon */}
             <View style={styles.incidentHeader}>
               <View style={styles.incidentHeaderLeft}>
-                <FontAwesome5 name="exclamation-triangle" size={14} color="#DC2626" />
+                <FontAwesome5
+                  name="exclamation-triangle"
+                  size={14}
+                  color="#DC2626"
+                />
                 <Text style={styles.incidentTitle}>
                   Sự cố ({((orderInfo as any).incidents as any[]).length})
                 </Text>
               </View>
             </View>
 
-            {((orderInfo as any).incidents as any[]).map((incident: any, idx: number) => {
-              const id = String(incident?.id ?? idx);
-              const images: string[] = Array.isArray(incident?.image_urls) ? incident.image_urls : [];
-              const status: IncidentStatus = incident?.status as IncidentStatus;
-              const isPending = status === IncidentStatus.CREATED;
-              const isAccepted = status === IncidentStatus.USER_ACCEPTED;
-              const isRejected = status === IncidentStatus.USER_REJECTED;
-              const isProcessing = processingIncidents.has(id);
+            {((orderInfo as any).incidents as any[]).map(
+              (incident: any, idx: number) => {
+                const id = String(incident?.id ?? idx);
+                const images: string[] = Array.isArray(incident?.image_urls)
+                  ? incident.image_urls
+                  : [];
+                const status: IncidentStatus =
+                  incident?.status as IncidentStatus;
+                const isPending = status === IncidentStatus.CREATED;
+                const isAccepted = status === IncidentStatus.USER_ACCEPTED;
+                const isRejected = status === IncidentStatus.USER_REJECTED;
+                const isProcessing = processingIncidents.has(id);
 
-              const statusConfig = isAccepted
-                ? { label: "Đã xác nhận", color: "#16A34A", bg: "#DCFCE7", icon: "check-circle" as const }
-                : isRejected
-                ? { label: "Đã từ chối", color: "#DC2626", bg: "#FEE2E2", icon: "times-circle" as const }
-                : { label: "Chờ xử lý", color: "#D97706", bg: "#FEF3C7", icon: "clock" as const };
+                const statusConfig = isAccepted
+                  ? {
+                      label: "Đã xác nhận",
+                      color: "#16A34A",
+                      bg: "#DCFCE7",
+                      icon: "check-circle" as const,
+                    }
+                  : isRejected
+                    ? {
+                        label: "Đã từ chối",
+                        color: "#DC2626",
+                        bg: "#FEE2E2",
+                        icon: "times-circle" as const,
+                      }
+                    : {
+                        label: "Chờ xử lý",
+                        color: "#D97706",
+                        bg: "#FEF3C7",
+                        icon: "clock" as const,
+                      };
 
-              return (
-                <View key={id} style={[styles.incidentItem, idx > 0 && { marginTop: 12 }]}>
-                  {/* Status pill */}
-                  <View style={[styles.incidentStatusPill, { backgroundColor: statusConfig.bg }]}>
-                    <FontAwesome5 name={statusConfig.icon} size={11} color={statusConfig.color} />
-                    <Text style={[styles.incidentStatusLabel, { color: statusConfig.color }]}>
-                      {statusConfig.label}
-                    </Text>
-                  </View>
-
-                  <Text style={styles.incidentDesc}>
-                    {incident?.description || "Sự cố"}
-                  </Text>
-                  {!!incident?.type && (
-                    <Text style={styles.incidentMeta}>Loại: {String(incident.type)}</Text>
-                  )}
-
-                  {images.length > 0 && (
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      style={{ marginTop: 8 }}
+                return (
+                  <View
+                    key={id}
+                    style={[styles.incidentItem, idx > 0 && { marginTop: 12 }]}
+                  >
+                    {/* Status pill */}
+                    <View
+                      style={[
+                        styles.incidentStatusPill,
+                        { backgroundColor: statusConfig.bg },
+                      ]}
                     >
-                      {images.map((url, i) => (
-                        <Image
-                          key={`${url}-${i}`}
-                          source={{ uri: url }}
-                          style={styles.incidentImage}
-                        />
-                      ))}
-                    </ScrollView>
-                  )}
-
-                  {isPending && (
-                    <View style={styles.incidentActions}>
-                      <TouchableOpacity
+                      <FontAwesome5
+                        name={statusConfig.icon}
+                        size={11}
+                        color={statusConfig.color}
+                      />
+                      <Text
                         style={[
-                          styles.incidentBtn,
-                          styles.incidentBtnConfirm,
-                          isProcessing && { opacity: 0.6 },
+                          styles.incidentStatusLabel,
+                          { color: statusConfig.color },
                         ]}
-                        onPress={() => handleConfirmIncident(id)}
-                        disabled={isProcessing}
-                        activeOpacity={0.85}
                       >
-                        {isProcessing ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <>
-                            <FontAwesome5 name="check" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
-                            <Text style={styles.incidentBtnText}>Xác nhận</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.incidentBtn,
-                          styles.incidentBtnReject,
-                          isProcessing && { opacity: 0.6 },
-                        ]}
-                        onPress={() => handleRejectIncident(id)}
-                        disabled={isProcessing}
-                        activeOpacity={0.85}
-                      >
-                        {isProcessing ? (
-                          <ActivityIndicator size="small" color="#FFFFFF" />
-                        ) : (
-                          <>
-                            <FontAwesome5 name="times" size={12} color="#FFFFFF" style={{ marginRight: 6 }} />
-                            <Text style={styles.incidentBtnText}>Từ chối</Text>
-                          </>
-                        )}
-                      </TouchableOpacity>
+                        {statusConfig.label}
+                      </Text>
                     </View>
-                  )}
-                </View>
-              );
-            })}
+
+                    <Text style={styles.incidentDesc}>
+                      {incident?.description || "Sự cố"}
+                    </Text>
+                    {!!incident?.type && (
+                      <Text style={styles.incidentMeta}>
+                        Loại: {String(incident.type)}
+                      </Text>
+                    )}
+
+                    {images.length > 0 && (
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={{ marginTop: 8 }}
+                      >
+                        {images.map((url, i) => (
+                          <Image
+                            key={`${url}-${i}`}
+                            source={{ uri: url }}
+                            style={styles.incidentImage}
+                          />
+                        ))}
+                      </ScrollView>
+                    )}
+
+                    {isPending && (
+                      <View style={styles.incidentActions}>
+                        <TouchableOpacity
+                          style={[
+                            styles.incidentBtn,
+                            styles.incidentBtnConfirm,
+                            isProcessing && { opacity: 0.6 },
+                          ]}
+                          onPress={() => handleConfirmIncident(id)}
+                          disabled={isProcessing}
+                          activeOpacity={0.85}
+                        >
+                          {isProcessing ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <FontAwesome5
+                                name="check"
+                                size={12}
+                                color="#FFFFFF"
+                                style={{ marginRight: 6 }}
+                              />
+                              <Text style={styles.incidentBtnText}>
+                                Xác nhận
+                              </Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.incidentBtn,
+                            styles.incidentBtnReject,
+                            isProcessing && { opacity: 0.6 },
+                          ]}
+                          onPress={() => handleRejectIncident(id)}
+                          disabled={isProcessing}
+                          activeOpacity={0.85}
+                        >
+                          {isProcessing ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <FontAwesome5
+                                name="times"
+                                size={12}
+                                color="#FFFFFF"
+                                style={{ marginRight: 6 }}
+                              />
+                              <Text style={styles.incidentBtnText}>
+                                Từ chối
+                              </Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                );
+              },
+            )}
           </View>
         )}
 
@@ -1213,7 +1385,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             <View style={styles.sectionHeader}>
               <View style={styles.sectionTitleRow}>
                 <View style={styles.sectionIcon}>
-                  <FontAwesome5 name="shipping-fast" size={12} color="#7C3AED" />
+                  <FontAwesome5
+                    name="shipping-fast"
+                    size={12}
+                    color="#7C3AED"
+                  />
                 </View>
                 <Text style={styles.sectionTitle}>Hàng hóa</Text>
               </View>
@@ -1226,50 +1402,54 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 
             <StepperProgress steps={getRetailSteps()} />
 
-            {retailItems && retailItems.length > 0 ? (
-              retailItems.map((item, idx) => {
-                const thumb = item.product_thumbnail_url;
+            {retailItems && retailItems.length > 0
+              ? retailItems.map((item, idx) => {
+                  const thumb = item.product_thumbnail_url;
 
-                return (
-                  <TouchableOpacity
-                    key={item.id || idx}
-                    style={styles.checkboxCard}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.productImageContainer}>
-                      {thumb ? (
-                        <Image
-                          source={{ uri: thumb }}
-                          style={styles.productImage}
-                        />
-                      ) : (
-                        <View style={styles.productImagePlaceholder}>
-                          <Text style={{ color: "#6B7280", fontWeight: "700" }}>
-                            {(item.product_name || item.name || "")
-                              .charAt(0)
-                              .toUpperCase()}
-                          </Text>
-                        </View>
-                      )}
-                    </View>
+                  return (
+                    <TouchableOpacity
+                      key={item.id || idx}
+                      style={styles.checkboxCard}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.productImageContainer}>
+                        {thumb ? (
+                          <Image
+                            source={{ uri: thumb }}
+                            style={styles.productImage}
+                          />
+                        ) : (
+                          <View style={styles.productImagePlaceholder}>
+                            <Text
+                              style={{ color: "#6B7280", fontWeight: "700" }}
+                            >
+                              {(item.product_name || item.name || "")
+                                .charAt(0)
+                                .toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
 
-                    <View style={styles.checkboxContent}>
-                      <Text style={styles.checkboxTitle}>
-                        {item.product_name || item.name || `Sản phẩm ${idx + 1}`}
-                      </Text>
-                      <Text style={styles.checkboxMeta}>
-                        SL: {item.quantity || 1} •{" "}
-                        <Text style={styles.checkboxPrice}>
-                          {formatCurrencyVND(
-                            item.total_price ?? item.unit_price ?? 0
-                          )}
+                      <View style={styles.checkboxContent}>
+                        <Text style={styles.checkboxTitle}>
+                          {item.product_name ||
+                            item.name ||
+                            `Sản phẩm ${idx + 1}`}
                         </Text>
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })
-            ) : null}
+                        <Text style={styles.checkboxMeta}>
+                          SL: {item.quantity || 1} •{" "}
+                          <Text style={styles.checkboxPrice}>
+                            {formatCurrencyVND(
+                              item.total_price ?? item.unit_price ?? 0,
+                            )}
+                          </Text>
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
+              : null}
 
             <View style={styles.sectionFooter}>
               <View>
@@ -1315,7 +1495,10 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     keyboardType="numeric"
                     placeholder="0"
                     placeholderTextColor="#9CA3AF"
-                    editable={orderInfo?.status === OrderStatus.CREATED && !isGoodsFeeConfirmed}
+                    editable={
+                      orderInfo?.status === OrderStatus.CREATED &&
+                      !isGoodsFeeConfirmed
+                    }
                   />
                   <Text style={styles.additionalFeeCurrency}>VNĐ</Text>
                 </View>
@@ -1328,7 +1511,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                 <TouchableOpacity
                   style={[
                     styles.stepConfirmButton,
-                    isGoodsFeeConfirmed && styles.stepConfirmButtonUnlock
+                    isGoodsFeeConfirmed && styles.stepConfirmButtonUnlock,
                   ]}
                   onPress={handleGoodsFeeConfirm}
                   activeOpacity={1}
@@ -1340,7 +1523,9 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     style={{ marginRight: 6 }}
                   />
                   <Text style={styles.stepConfirmButtonText}>
-                    {isGoodsFeeConfirmed ? "Hủy báo giá" : "Báo giá phí bổ sung"}
+                    {isGoodsFeeConfirmed
+                      ? "Hủy báo giá"
+                      : "Báo giá phí bổ sung"}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1390,140 +1575,192 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 
             {serviceItems && serviceItems.length > 0 && (
               <View style={styles.serviceDetails}>
-                {serviceItems.map((item, idx) => (
-                  <View key={item.id || idx} style={{ marginBottom: 12 }}>
-                    <View style={styles.serviceRow}>
-                      <Text style={styles.serviceName}>
-                        {item.product_name || item.name || `Dịch vụ ${idx + 1}`}
-                      </Text>
-                      {(item.package_name || item.package_badge) && (
-                        <View style={styles.packageBadge}>
-                          <Text style={styles.packageBadgeText}>
-                            {item.package_name || item.package_badge}
+                {groupLinesByParent(serviceItems)
+                  .flatMap((group) => [group.parent, ...group.children])
+                  .map((item, idx) => (
+                    <View
+                      key={item.id || idx}
+                      style={{
+                        marginBottom: 12,
+                        marginLeft: parentIdOf(item) ? 16 : 0,
+                      }}
+                    >
+                      <View style={styles.serviceRow}>
+                        <View style={styles.serviceNameRow}>
+                          <Text style={styles.serviceName}>
+                            {(() => {
+                              const name =
+                                item.product_name ||
+                                item.name ||
+                                `Dịch vụ ${idx + 1}`;
+                              const barcodes = garmentsForOrderItem(
+                                garments,
+                                item.id,
+                              )
+                                .map((g) => g.barcode)
+                                .filter(Boolean);
+                              return barcodes.length > 0
+                                ? `${name} - ${barcodes.join(", ")}`
+                                : name;
+                            })()}
                           </Text>
                         </View>
-                      )}
-                    </View>
-
-                    <View style={styles.weightsRow}>
-                      <View style={[styles.weightBox, styles.actualWeightBox]}>
-                        <Text style={styles.actualWeightLabel}>KHÁCH BÁO</Text>
-                        <View style={styles.weightStepper}>
-                          <View style={styles.weightStepBtnSpacer} />
-                          <View style={styles.weightStepperCenter}>
-                            <Text style={styles.weightStepValue}>
-                              {String(item.quantity ?? "-")}
-                            </Text>
-                            <Text style={styles.weightUnit}>
-                              {item.unit || "kg"}
+                        {(item.package_name || item.package_badge) && (
+                          <View style={styles.packageBadge}>
+                            <Text style={styles.packageBadgeText}>
+                              {item.package_name || item.package_badge}
                             </Text>
                           </View>
-                          <View style={styles.weightStepBtnSpacer} />
+                        )}
+                      </View>
+
+                      <View style={styles.weightsRow}>
+                        <View
+                          style={[styles.weightBox, styles.actualWeightBox]}
+                        >
+                          <Text style={styles.actualWeightLabel}>
+                            KHÁCH BÁO
+                          </Text>
+                          <View style={styles.weightStepper}>
+                            <View style={styles.weightStepBtnSpacer} />
+                            <View style={styles.weightStepperCenter}>
+                              <Text style={styles.weightStepValue}>
+                                {String(item.quantity ?? "-")}
+                              </Text>
+                              <Text style={styles.weightUnit}>
+                                {item.unit || "kg"}
+                              </Text>
+                            </View>
+                            <View style={styles.weightStepBtnSpacer} />
+                          </View>
+                        </View>
+                        <View
+                          style={[styles.weightBox, styles.actualWeightBox]}
+                        >
+                          <Text style={styles.actualWeightLabel}>THỰC TẾ</Text>
+                          <View style={styles.weightStepper}>
+                            {orderInfo?.status === OrderStatus.CREATED &&
+                            !isChangesConfirmed ? (
+                              <TouchableOpacity
+                                style={styles.weightStepBtn}
+                                onPress={() =>
+                                  changeActualBy(item.id ?? String(idx), -0.5)
+                                }
+                                activeOpacity={0.7}
+                              >
+                                <FontAwesome5
+                                  name="minus"
+                                  size={10}
+                                  color="#6B7280"
+                                />
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={styles.weightStepBtnSpacer} />
+                            )}
+
+                            <View style={styles.weightStepperCenter}>
+                              <TextInput
+                                style={styles.weightStepInput}
+                                value={
+                                  actualWeights[item.id ?? String(idx)] ??
+                                  String(
+                                    item.adjust_quantity ?? item.quantity ?? "",
+                                  )
+                                }
+                                onChangeText={(text) =>
+                                  setActualWeightFor(
+                                    item.id ?? String(idx),
+                                    text,
+                                  )
+                                }
+                                keyboardType="decimal-pad"
+                                placeholder="0"
+                                editable={
+                                  orderInfo?.status === OrderStatus.CREATED &&
+                                  !isChangesConfirmed
+                                }
+                              />
+                              <Text style={styles.weightUnit}>kg</Text>
+                            </View>
+
+                            {orderInfo?.status === OrderStatus.CREATED &&
+                            !isChangesConfirmed ? (
+                              <TouchableOpacity
+                                style={styles.weightStepBtn}
+                                onPress={() =>
+                                  changeActualBy(item.id ?? String(idx), 0.5)
+                                }
+                                activeOpacity={0.7}
+                              >
+                                <FontAwesome5
+                                  name="plus"
+                                  size={10}
+                                  color="#2563EB"
+                                />
+                              </TouchableOpacity>
+                            ) : (
+                              <View style={styles.weightStepBtnSpacer} />
+                            )}
+                          </View>
                         </View>
                       </View>
-                      <View style={[styles.weightBox, styles.actualWeightBox]}>
-                        <Text style={styles.actualWeightLabel}>THỰC TẾ</Text>
-                        <View style={styles.weightStepper}>
-                          {orderInfo?.status === OrderStatus.CREATED &&
-                          !isChangesConfirmed ? (
-                            <TouchableOpacity
-                              style={styles.weightStepBtn}
-                              onPress={() =>
-                                changeActualBy(item.id ?? String(idx), -0.5)
-                              }
-                              activeOpacity={0.7}
-                            >
-                              <FontAwesome5
-                                name="minus"
-                                size={10}
-                                color="#6B7280"
-                              />
-                            </TouchableOpacity>
-                          ) : (
-                            <View style={styles.weightStepBtnSpacer} />
-                          )}
 
-                          <View style={styles.weightStepperCenter}>
-                            <TextInput
-                              style={styles.weightStepInput}
-                              value={
-                                actualWeights[item.id ?? String(idx)] ??
+                      {/* Price after adjustment */}
+                      <View style={styles.servicePriceContainer}>
+                        {(() => {
+                          const actualWeight =
+                            parseFloat(
+                              actualWeights[item.id ?? String(idx)] ??
                                 String(
-                                  item.adjust_quantity ?? item.quantity ?? ""
-                                )
-                              }
-                              onChangeText={(text) =>
-                                setActualWeightFor(item.id ?? String(idx), text)
-                              }
-                              keyboardType="decimal-pad"
-                              placeholder="0"
-                              editable={
-                                orderInfo?.status === OrderStatus.CREATED &&
-                                !isChangesConfirmed
-                              }
-                            />
-                            <Text style={styles.weightUnit}>kg</Text>
-                          </View>
+                                  item.adjust_quantity ?? item.quantity ?? "0",
+                                ),
+                            ) || 0;
+                          const unitPrice = item.unit_price ?? 0;
+                          const adjustedPrice = actualWeight * unitPrice;
+                          const originalPrice =
+                            (item.quantity ?? 0) * unitPrice;
+                          const hasAdjustment =
+                            actualWeight !== (item.quantity ?? 0);
 
-                          {orderInfo?.status === OrderStatus.CREATED &&
-                          !isChangesConfirmed ? (
-                            <TouchableOpacity
-                              style={styles.weightStepBtn}
-                              onPress={() =>
-                                changeActualBy(item.id ?? String(idx), 0.5)
-                              }
-                              activeOpacity={0.7}
-                            >
-                              <FontAwesome5
-                                name="plus"
-                                size={10}
-                                color="#2563EB"
-                              />
-                            </TouchableOpacity>
-                          ) : (
-                            <View style={styles.weightStepBtnSpacer} />
-                          )}
-                        </View>
+                          return (
+                            <View style={styles.servicePriceRow}>
+                              {hasAdjustment && originalPrice > 0 && (
+                                <Text style={styles.serviceOriginalPrice}>
+                                  {formatCurrencyVND(originalPrice)}
+                                </Text>
+                              )}
+                              {hasAdjustment && (
+                                <Text style={styles.serviceAdjustedPriceLabel}>
+                                  Giá điều chỉnh:{" "}
+                                </Text>
+                              )}
+                              <Text style={styles.serviceAdjustedPrice}>
+                                {formatCurrencyVND(adjustedPrice)}
+                              </Text>
+                            </View>
+                          );
+                        })()}
                       </View>
+                      {/* <Text style={styles.serviceTotalLabel}>
+                        Trạng thái dòng:{" "}
+                        {serviceLineStatusLabel(
+                          item.service_status || item.status,
+                        )}
+                      </Text> */}
+                      {/* <Text style={styles.serviceAdjustedPrice}>
+                        Thành tiền: {formatCurrencyVND(lineAmount(item))}
+                      </Text> */}
                     </View>
-
-                    {/* Price after adjustment */}
-                    <View style={styles.servicePriceContainer}>
-                      {(() => {
-                        const actualWeight =
-                          parseFloat(
-                            actualWeights[item.id ?? String(idx)] ??
-                            String(
-                              item.adjust_quantity ?? item.quantity ?? "0"
-                            )
-                          ) || 0;
-                        const unitPrice = item.unit_price ?? 0;
-                        const adjustedPrice = actualWeight * unitPrice;
-                        const originalPrice = (item.quantity ?? 0) * unitPrice;
-                        const hasAdjustment =
-                          actualWeight !== (item.quantity ?? 0);
-
-                        return (
-                          <View style={styles.servicePriceRow}>
-                            {hasAdjustment && originalPrice > 0 && (
-                              <Text style={styles.serviceOriginalPrice}>
-                                {formatCurrencyVND(originalPrice)}
-                              </Text>
-                            )}
-                            {hasAdjustment && (
-                              <Text style={styles.serviceAdjustedPriceLabel}>
-                                Giá điều chỉnh:{" "}
-                              </Text>
-                            )}
-                            <Text style={styles.serviceAdjustedPrice}>
-                              {formatCurrencyVND(adjustedPrice)}
-                            </Text>
-                          </View>
-                        );
-                      })()}
-                    </View>
-                  </View>
-                ))}
+                  ))}
+                <Text style={styles.serviceAdjustedPrice}>
+                  Tổng dịch vụ{" "}
+                  {formatCurrencyVND(
+                    serviceItems.reduce(
+                      (sum, item) => sum + lineAmount(item),
+                      0,
+                    ),
+                  )}
+                </Text>
               </View>
             )}
 
@@ -1539,7 +1776,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                       {serviceItems
                         .reduce(
                           (sum, item) => sum + (Number(item.quantity) || 0),
-                          0
+                          0,
                         )
                         .toFixed(1)}{" "}
                       kg
@@ -1556,8 +1793,8 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                           const adjustedQty = actualWeights[itemId]
                             ? parseFloat(actualWeights[itemId])
                             : Number(item.adjusted_quantity) ||
-                            Number(item.quantity) ||
-                            0;
+                              Number(item.quantity) ||
+                              0;
                           return sum + adjustedQty;
                         }, 0)
                         .toFixed(1)}{" "}
@@ -1623,7 +1860,10 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     keyboardType="numeric"
                     placeholder="0"
                     placeholderTextColor="#9CA3AF"
-                    editable={orderInfo?.status === OrderStatus.CREATED && !isChangesConfirmed}
+                    editable={
+                      orderInfo?.status === OrderStatus.CREATED &&
+                      !isChangesConfirmed
+                    }
                   />
                   <Text style={styles.additionalFeeCurrency}>VNĐ</Text>
                 </View>
@@ -1636,7 +1876,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                 <TouchableOpacity
                   style={[
                     styles.stepConfirmButton,
-                    isChangesConfirmed && styles.stepConfirmButtonUnlock
+                    isChangesConfirmed && styles.stepConfirmButtonUnlock,
                   ]}
                   onPress={() => {
                     handleConfirmChanges();
@@ -1659,7 +1899,6 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           </View>
         )}
 
-
         {/* Print Tag Button */}
         <View style={styles.printTagContainer}>
           <TouchableOpacity
@@ -1673,9 +1912,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
               color="#374151"
               style={{ marginRight: 8 }}
             />
-            <Text style={styles.printTagButtonText}>
-              In tem
-            </Text>
+            <Text style={styles.printTagButtonText}>In tem</Text>
           </TouchableOpacity>
         </View>
 
@@ -1685,7 +1922,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             <TouchableOpacity
               style={[
                 styles.confirmButton,
-                (!isConfirmEnabled() && styles.confirmButtonDisabled)
+                !isConfirmEnabled() && styles.confirmButtonDisabled,
               ]}
               onPress={handleConfirm}
               activeOpacity={1}
@@ -1697,10 +1934,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                 color={isConfirmEnabled() ? "#FFFFFF" : "#9CA3AF"}
                 style={{ marginRight: 8 }}
               />
-              <Text style={[
-                styles.confirmButtonText,
-                !isConfirmEnabled() && styles.confirmButtonTextDisabled
-              ]}>
+              <Text
+                style={[
+                  styles.confirmButtonText,
+                  !isConfirmEnabled() && styles.confirmButtonTextDisabled,
+                ]}
+              >
                 Gửi báo giá
               </Text>
             </TouchableOpacity>
@@ -1718,16 +1957,13 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
               Chọn phương thức vận chuyển để trả hàng cho khách hàng
             </Text>
             <View style={styles.returnActions}>
-
               <TouchableOpacity
                 style={styles.returnShippingButton}
                 onPress={handleReturnWithShippingInternal}
                 activeOpacity={0.8}
               >
                 <FontAwesome5 name="shipping-fast" size={18} color="#FFFFFF" />
-                <Text style={styles.returnShippingButtonText}>
-                  Đặt ship
-                </Text>
+                <Text style={styles.returnShippingButtonText}>Đặt ship</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1791,7 +2027,10 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+            <ScrollView
+              style={styles.modalBody}
+              showsVerticalScrollIndicator={false}
+            >
               {/* Parcel Information */}
               <View style={styles.parcelSection}>
                 <Text style={styles.modalSectionTitle}>Thông tin gói hàng</Text>
@@ -1802,7 +2041,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     <TextInput
                       style={styles.parcelInput}
                       value={returnShippingParcel.cod}
-                      onChangeText={(text) => setReturnShippingParcel({ ...returnShippingParcel, cod: text })}
+                      onChangeText={(text) =>
+                        setReturnShippingParcel({
+                          ...returnShippingParcel,
+                          cod: text,
+                        })
+                      }
                       keyboardType="numeric"
                       placeholder="0"
                     />
@@ -1812,7 +2056,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     <TextInput
                       style={styles.parcelInput}
                       value={returnShippingParcel.amount}
-                      onChangeText={(text) => setReturnShippingParcel({ ...returnShippingParcel, amount: text })}
+                      onChangeText={(text) =>
+                        setReturnShippingParcel({
+                          ...returnShippingParcel,
+                          amount: text,
+                        })
+                      }
                       keyboardType="numeric"
                       placeholder="0"
                     />
@@ -1825,7 +2074,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     <TextInput
                       style={styles.parcelInput}
                       value={returnShippingParcel.width}
-                      onChangeText={(text) => setReturnShippingParcel({ ...returnShippingParcel, width: text })}
+                      onChangeText={(text) =>
+                        setReturnShippingParcel({
+                          ...returnShippingParcel,
+                          width: text,
+                        })
+                      }
                       keyboardType="numeric"
                       placeholder="10"
                     />
@@ -1835,7 +2089,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     <TextInput
                       style={styles.parcelInput}
                       value={returnShippingParcel.height}
-                      onChangeText={(text) => setReturnShippingParcel({ ...returnShippingParcel, height: text })}
+                      onChangeText={(text) =>
+                        setReturnShippingParcel({
+                          ...returnShippingParcel,
+                          height: text,
+                        })
+                      }
                       keyboardType="numeric"
                       placeholder="10"
                     />
@@ -1848,7 +2107,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     <TextInput
                       style={styles.parcelInput}
                       value={returnShippingParcel.length}
-                      onChangeText={(text) => setReturnShippingParcel({ ...returnShippingParcel, length: text })}
+                      onChangeText={(text) =>
+                        setReturnShippingParcel({
+                          ...returnShippingParcel,
+                          length: text,
+                        })
+                      }
                       keyboardType="numeric"
                       placeholder="10"
                     />
@@ -1858,7 +2122,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                     <TextInput
                       style={styles.parcelInput}
                       value={returnShippingParcel.weight}
-                      onChangeText={(text) => setReturnShippingParcel({ ...returnShippingParcel, weight: text })}
+                      onChangeText={(text) =>
+                        setReturnShippingParcel({
+                          ...returnShippingParcel,
+                          weight: text,
+                        })
+                      }
                       keyboardType="numeric"
                       placeholder="1000"
                     />
@@ -1866,7 +2135,10 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                 </View>
 
                 <TouchableOpacity
-                  style={[styles.fetchButton, fetchingReturnRates && styles.fetchButtonDisabled]}
+                  style={[
+                    styles.fetchButton,
+                    fetchingReturnRates && styles.fetchButtonDisabled,
+                  ]}
                   onPress={handleFetchReturnRates}
                   disabled={fetchingReturnRates}
                   activeOpacity={0.8}
@@ -1885,13 +2157,16 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
               {/* Carrier Selection */}
               {returnShippingCarriers.length > 0 && (
                 <View style={styles.carrierSection}>
-                  <Text style={styles.modalSectionTitle}>Chọn đơn vị vận chuyển</Text>
+                  <Text style={styles.modalSectionTitle}>
+                    Chọn đơn vị vận chuyển
+                  </Text>
                   {returnShippingCarriers.map((carrier) => (
                     <TouchableOpacity
                       key={carrier.id}
                       style={[
                         styles.carrierCard,
-                        selectedReturnCarrierId === carrier.id && styles.carrierCardSelected,
+                        selectedReturnCarrierId === carrier.id &&
+                          styles.carrierCardSelected,
                       ]}
                       onPress={() => setSelectedReturnCarrierId(carrier.id)}
                       activeOpacity={0.7}
@@ -1906,10 +2181,14 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                         <View style={styles.carrierInfo}>
                           <Text style={styles.carrierName}>{carrier.name}</Text>
                           {carrier.description && (
-                            <Text style={styles.carrierDescription}>{carrier.description}</Text>
+                            <Text style={styles.carrierDescription}>
+                              {carrier.description}
+                            </Text>
                           )}
                           {carrier.estimatedTime && (
-                            <Text style={styles.carrierTime}>Thời gian: {carrier.estimatedTime}</Text>
+                            <Text style={styles.carrierTime}>
+                              Thời gian: {carrier.estimatedTime}
+                            </Text>
                           )}
                         </View>
                         <View style={styles.carrierPrice}>
@@ -1925,9 +2204,14 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 
               {returnShippingCarriers.length === 0 && !fetchingReturnRates && (
                 <View style={styles.emptyState}>
-                  <FontAwesome5 name="shipping-fast" size={32} color="#D1D5DB" />
+                  <FontAwesome5
+                    name="shipping-fast"
+                    size={32}
+                    color="#D1D5DB"
+                  />
                   <Text style={styles.emptyStateText}>
-                    Nhập thông tin gói hàng và nhấn "Lấy báo giá" để xem các đơn vị vận chuyển
+                    Nhập thông tin gói hàng và nhấn "Lấy báo giá" để xem các đơn
+                    vị vận chuyển
                   </Text>
                 </View>
               )}
@@ -1950,7 +2234,8 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                 style={[
                   styles.modalButton,
                   styles.modalConfirmButton,
-                  (!selectedReturnCarrierId || isCreatingShipment) && styles.modalConfirmButtonDisabled,
+                  (!selectedReturnCarrierId || isCreatingShipment) &&
+                    styles.modalConfirmButtonDisabled,
                 ]}
                 onPress={handleConfirmReturnShipping}
                 disabled={!selectedReturnCarrierId || isCreatingShipment}
@@ -1958,7 +2243,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
               >
                 {isCreatingShipment ? (
                   <>
-                    <ActivityIndicator size="small" color="#FFFFFF" style={{ marginRight: 8 }} />
+                    <ActivityIndicator
+                      size="small"
+                      color="#FFFFFF"
+                      style={{ marginRight: 8 }}
+                    />
                     <Text style={styles.modalConfirmButtonText}>
                       Đang tạo đơn vận chuyển...
                     </Text>
@@ -1967,7 +2256,8 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                   <Text
                     style={[
                       styles.modalConfirmButtonText,
-                      !selectedReturnCarrierId && styles.modalConfirmButtonTextDisabled,
+                      !selectedReturnCarrierId &&
+                        styles.modalConfirmButtonTextDisabled,
                     ]}
                   >
                     Xác nhận
@@ -2323,6 +2613,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     alignItems: "center",
     marginBottom: 8,
+  },
+  serviceNameRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    flex: 1,
+    gap: 8,
   },
   serviceName: {
     fontSize: 14,

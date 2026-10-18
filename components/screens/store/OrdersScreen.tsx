@@ -1590,7 +1590,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       const trackingItemIds = batchTrackingItemIds.get(barcode) || [];
       trackingItemIds.forEach((trackingItemId) => {
         logisticTripItems.push({
-          type: LogisticTripItemType.BIN_OUTBOUND,
+          type: LogisticTripItemType.BAG_INBOUND,
           service_item_tracking_id: trackingItemId, // Use the actual tracking item ID
         });
       });

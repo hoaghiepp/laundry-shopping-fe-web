@@ -17,6 +17,7 @@ import { Order, orderService } from "@/services/api/orderService";
 import { packageService } from "@/services/api/packageProductService";
 import { cacheManager } from "@/services/cache";
 import { formatCurrencyVND } from "@/utils/format";
+import { groupLinesByParent, lineAmount } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as SecureStore from "@/lib/secureStorage";
@@ -472,6 +473,11 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
     orderDetail.order_items?.filter(
       (item) => (item.product_type as ProductType) === ProductType.SERVICE
     ) || [];
+  const orderedServiceItems = groupLinesByParent(serviceItems).flatMap((group) => [
+    { item: group.parent, nested: false },
+    ...group.children.map((child) => ({ item: child, nested: true })),
+  ]);
+  const serviceSubtotal = serviceItems.reduce((sum, item) => sum + lineAmount(item), 0);
 
   // Calculate package deduction based on selected packages
   const calculatePackageDeduction = (): number => {
@@ -1137,8 +1143,8 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
             </View>
 
             <View style={styles.serviceDetails}>
-              {serviceItems.map((item, index) => (
-                <View key={item.id || index} style={{ marginBottom: 12 }}>
+              {orderedServiceItems.map(({ item, nested }, index) => (
+                <View key={item.id || index} style={{ marginBottom: 12, marginLeft: nested ? 16 : 0 }}>
                   <View style={styles.serviceRow}>
                     <Text style={styles.serviceName}>
                       {item.product_name || `Dịch vụ #${item.product_id}`}
@@ -1205,6 +1211,12 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
                   </View>
                 </View>
               ))}
+              {serviceItems.length > 0 && (
+                <View style={styles.servicePriceContainer}>
+                  <Text style={styles.adjustedPriceLabel}>Tổng dịch vụ</Text>
+                  <Text style={styles.productPrice}>{formatCurrencyVND(serviceSubtotal)}</Text>
+                </View>
+              )}
             </View>
           </View>
         )}

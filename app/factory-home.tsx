@@ -15,6 +15,7 @@ import { FactoryTab, LogisticTripStatus, SecureStoreKeys, StoreType } from '@/co
 import { ensureSessionFromStoredTokens } from '@/lib/sessionHydrate';
 import { getLastSelectedFactoryId, saveLastSelectedFactoryId } from '@/lib/storeSelection';
 import { fcmService } from '@/services/api/fcmService';
+import { GarmentScanDialog, garmentNameFromOrder } from '@/components/staff/GarmentScanDialog';
 import { logisticService } from '@/services/api/logisticService';
 import { Order, orderService } from '@/services/api/orderService';
 import { StoreListItem, storeService } from '@/services/api/storeService';
@@ -43,6 +44,13 @@ export default function FactoryHome() {
   const [selectedItemId, setSelectedItemId] = useState<string>('');
   const [selectedOrderId, setSelectedOrderId] = useState<string>('');
   const [selectedItemType, setSelectedItemType] = useState<'normal' | 'exception_wait' | 'return'>('normal');
+  const [scannedGarment, setScannedGarment] = useState<{
+    barcode: string;
+    name: string;
+    orderCode?: string;
+    status?: string;
+    currentStoreId?: string;
+  } | null>(null);
   const [factories, setFactories] = useState<StoreListItem[]>([]);
   const [selectedFactory, setSelectedFactory] = useState<StoreListItem | null>(null);
   const [showFactorySelector, setShowFactorySelector] = useState(false);
@@ -273,68 +281,39 @@ export default function FactoryHome() {
       
       // Search for tracking item by barcode and current store (factory)
       const trackingResponse = await logisticService.searchTrackingItems(
-        {
-          barcode: barcode,
-          current_store_id: selectedFactory.id,
-        },
+        { barcode },
         { page: 0, size: 1 }
       );
       
       if (!trackingResponse?.data || trackingResponse.data.length === 0) {
-        Alert.alert('Không tìm thấy', `Không tìm thấy món đồ với mã: ${barcode} tại xưởng này`);
+        Alert.alert('Không tìm thấy', `Không tìm thấy món đồ với mã: ${barcode}`);
         return;
       }
       
       const trackingItem = trackingResponse.data[0];
-      const orderId = trackingItem.order_id;
-      
-      if (!orderId) {
-        Alert.alert('Lỗi', 'Món đồ chưa được gán vào đơn hàng');
-        return;
-      }
-      
-      // Get order information using order ID
-      const orderResponse = await orderService.searchStoreOrders(
-        {
-          factory_id: selectedFactory.id,
-          fetch_order_items: true,
-          fetch_order_logs: true,
-        },
-        { page: 0, size: 100 }
-      );
-      
-      if (!orderResponse?.data) {
-        Alert.alert('Lỗi', 'Không thể tải thông tin đơn hàng');
-        return;
-      }
-      
-      // Find the specific order by ID
-      const order = orderResponse.data.find((o: Order) => o.id === orderId);
-      
-      if (!order) {
-        Alert.alert('Không tìm thấy', `Không tìm thấy đơn hàng với ID: ${orderId}`);
-        return;
-      }
-      
-      // Display order information
-      Alert.alert(
-        'Thông tin đơn hàng',
-        `Mã đơn: ${order.code}\nTrạng thái: ${order.status}\nTổng tiền: ${order.final_total.toLocaleString('vi-VN')} đ\nGhi chú: ${order.note || 'Không có'}`,
-        [
+      const orderCode = trackingItem.order_code || trackingItem.orderCode;
+      const orderItemId = trackingItem.order_item_id || trackingItem.orderItemId;
+      let garmentName = barcode;
+      if (orderCode) {
+        const byCode = await orderService.searchStoreOrders(
           {
-            text: 'Đóng',
-            style: 'cancel',
+            code: orderCode,
+            factory_id: selectedFactory.id,
+            fetch_order_items: true,
           },
-          {
-            text: 'Xem chi tiết',
-            onPress: () => {
-              console.log('Full order details:', order);
-              // You can navigate to order detail screen or show more info
-            },
-          },
-        ]
-      );
-      
+          { page: 0, size: 1 }
+        );
+        if (byCode?.data?.[0]) {
+          garmentName = garmentNameFromOrder(byCode.data[0], orderItemId);
+        }
+      }
+      setScannedGarment({
+        barcode: trackingItem.barcode || barcode,
+        name: garmentName,
+        orderCode,
+        status: trackingItem.status,
+        currentStoreId: trackingItem.current_store_id || trackingItem.currentStoreId,
+      });
     } catch (error: any) {
       console.error('Error handling barcode:', error);
       Alert.alert(
@@ -707,6 +686,16 @@ export default function FactoryHome() {
         selectedFactoryId={selectedFactory?.id || null}
         onSelect={handleFactoryChange}
         onClose={() => setShowFactorySelector(false)}
+      />
+
+      <GarmentScanDialog
+        visible={!!scannedGarment}
+        barcode={scannedGarment?.barcode || ""}
+        garmentName={scannedGarment?.name || ""}
+        orderCode={scannedGarment?.orderCode}
+        status={scannedGarment?.status}
+        currentStoreId={scannedGarment?.currentStoreId}
+        onClose={() => setScannedGarment(null)}
       />
 
       <View style={styles.content}>

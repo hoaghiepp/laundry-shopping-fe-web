@@ -1,8 +1,9 @@
 import { ProductType } from "@/constants/enum";
 import { ProductItem } from "@/models/model";
 import { formatCurrencyVND } from "@/utils/format";
+import { chargedLineAmount, groupLinesByParent } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -14,12 +15,17 @@ import {
   TouchableOpacity,
   useWindowDimensions,
   View,
+  type StyleProp,
+  type TextStyle,
 } from "react-native";
 
 export interface StaffOrderCartItem {
   product: ProductItem;
   quantity: number;
   cartItemId: string | null;
+  parentId: string | null;
+  displayName: string;
+  note?: string;
 }
 
 export interface StaffOrderCartDialogProps {
@@ -31,8 +37,8 @@ export interface StaffOrderCartDialogProps {
   itemLoading: Record<string, boolean>;
   onClose: () => void;
   onCheckout: () => void;
-  onIncrease: (product: ProductItem) => void;
-  onDecrease: (product: ProductItem) => void;
+  onIncrease: (entry: StaffOrderCartItem) => void;
+  onDecrease: (entry: StaffOrderCartItem) => void;
   onRemove: (entry: StaffOrderCartItem) => void;
 }
 
@@ -57,7 +63,65 @@ function buildPrepSummary(cart: StaffOrderCartItem[]): string {
   return "Đơn hàng hóa — bảo quản nhiệt độ phòng, không qua chu trình giặt.";
 }
 
-const CartLine = ({
+function TruncatedName({ text, style }: { text: string; style?: StyleProp<TextStyle> }) {
+  const ref = useRef<Text>(null);
+  const tipRef = useRef<{ remove: () => void } | null>(null);
+
+  const hide = () => {
+    tipRef.current?.remove();
+    tipRef.current = null;
+  };
+
+  const show = (force = false) => {
+    const node = ref.current as unknown as HTMLElement | null;
+    const overflows =
+      !!node && typeof node.scrollWidth === "number" && node.scrollWidth > node.clientWidth + 1;
+    if (!force && !overflows) return;
+    if (force && !overflows && text.length <= 24) return;
+    if (Platform.OS === "web" && typeof document === "undefined") return;
+    if (Platform.OS !== "web" || !node) return;
+    hide();
+    const rect = node.getBoundingClientRect();
+    const tip = document.createElement("div");
+    tip.textContent = text;
+    const below = rect.bottom + 6;
+    const placeAbove = below + 48 > window.innerHeight;
+    Object.assign(tip.style, {
+      position: "fixed",
+      left: `${rect.left}px`,
+      top: `${placeAbove ? rect.top - 6 : below}px`,
+      transform: placeAbove ? "translateY(-100%)" : "",
+      zIndex: "100000",
+      maxWidth: "360px",
+      background: "#111827",
+      color: "#F9FAFB",
+      padding: "8px 10px",
+      borderRadius: "8px",
+      fontSize: "13px",
+      lineHeight: "18px",
+      pointerEvents: "none",
+    });
+    document.body.appendChild(tip);
+    tipRef.current = tip;
+  };
+
+  useEffect(() => hide, []);
+
+  return (
+    <Pressable
+      style={lineStyles.nameWrap}
+      onPressIn={() => show(true)}
+      onPressOut={hide}
+      {...(Platform.OS === "web" ? { onMouseEnter: () => show(false), onMouseLeave: hide } : {})}
+    >
+      <Text ref={ref} style={[style, lineStyles.ellipsis]} numberOfLines={1} ellipsizeMode="tail">
+        {text}
+      </Text>
+    </Pressable>
+  );
+}
+
+const SubItemLine = ({
   entry,
   loading,
   onIncrease,
@@ -70,9 +134,63 @@ const CartLine = ({
   onDecrease: () => void;
   onRemove: () => void;
 }) => {
+  const { quantity } = entry;
+  const lineTotal = chargedLineAmount(entry.product.price, quantity, false);
+
+  return (
+    <View style={lineStyles.subRow}>
+      <TruncatedName text={entry.displayName || entry.product.name} style={lineStyles.subName} />
+      {entry.note ? <TruncatedName text={entry.note} style={lineStyles.subNote} /> : null}
+      <Text style={lineStyles.subPrice}>{formatCurrencyVND(lineTotal)}</Text>
+      {loading ? (
+        <ActivityIndicator size="small" color="#2563EB" />
+      ) : (
+        <View style={[lineStyles.qtyRow, lineStyles.subQty]}>
+          <TouchableOpacity
+            style={lineStyles.qtyBtn}
+            onPress={quantity === 1 ? onRemove : onDecrease}
+            activeOpacity={0.75}
+          >
+            <FontAwesome5
+              name={quantity === 1 ? "trash-alt" : "minus"}
+              size={11}
+              color={quantity === 1 ? "#DC2626" : "#2563EB"}
+            />
+          </TouchableOpacity>
+          <Text style={lineStyles.qty}>{quantity}</Text>
+          <TouchableOpacity style={lineStyles.qtyBtn} onPress={onIncrease} activeOpacity={0.75}>
+            <FontAwesome5 name="plus" size={11} color="#2563EB" />
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+};
+
+const CartLine = ({
+  entry,
+  loading,
+  locked,
+  collapsible,
+  expanded,
+  onToggle,
+  onIncrease,
+  onDecrease,
+  onRemove,
+}: {
+  entry: StaffOrderCartItem;
+  loading: boolean;
+  locked: boolean;
+  collapsible?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
+  onIncrease: () => void;
+  onDecrease: () => void;
+  onRemove: () => void;
+}) => {
   const { product, quantity } = entry;
   const prepLabel = getPreparationLabel(product);
-  const lineTotal = product.price * quantity;
+  const lineTotal = chargedLineAmount(product.price, quantity, !!locked);
   const isService = product.type === ProductType.SERVICE;
 
   return (
@@ -92,9 +210,28 @@ const CartLine = ({
       </View>
 
       <View style={lineStyles.body}>
-        <Text style={lineStyles.name} numberOfLines={2}>
-          {product.name}
-        </Text>
+        <View style={lineStyles.nameRow}>
+          {collapsible ? (
+            <TouchableOpacity
+              onPress={onToggle}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={expanded ? "Thu gọn món" : "Xem món"}
+            >
+              <FontAwesome5
+                name={expanded ? "chevron-down" : "chevron-right"}
+                size={12}
+                color="#6B7280"
+              />
+            </TouchableOpacity>
+          ) : null}
+          <Text style={[lineStyles.name, lineStyles.nameFlex]} numberOfLines={2}>
+            {entry.displayName || product.name}
+          </Text>
+        </View>
+        {entry.note ? (
+          <Text style={lineStyles.note} numberOfLines={2}>{entry.note}</Text>
+        ) : null}
         <Text style={lineStyles.unitPrice}>
           {formatCurrencyVND(product.price)}
           {product.unit ? ` / ${product.unit}` : ""}
@@ -108,26 +245,37 @@ const CartLine = ({
       </View>
 
       <View style={lineStyles.side}>
-        <Text style={lineStyles.lineTotal}>{formatCurrencyVND(lineTotal)}</Text>
+        {locked ? null : <Text style={lineStyles.lineTotal}>{formatCurrencyVND(lineTotal)}</Text>}
         {loading ? (
           <ActivityIndicator size="small" color="#2563EB" style={{ marginTop: 8 }} />
         ) : (
           <View style={lineStyles.qtyRow}>
-            <TouchableOpacity
-              style={lineStyles.qtyBtn}
-              onPress={quantity === 1 ? onRemove : onDecrease}
-              activeOpacity={0.75}
-            >
-              <FontAwesome5
-                name={quantity === 1 ? "trash-alt" : "minus"}
-                size={11}
-                color={quantity === 1 ? "#DC2626" : "#2563EB"}
-              />
-            </TouchableOpacity>
-            <Text style={lineStyles.qty}>{quantity}</Text>
-            <TouchableOpacity style={lineStyles.qtyBtn} onPress={onIncrease} activeOpacity={0.75}>
-              <FontAwesome5 name="plus" size={11} color="#2563EB" />
-            </TouchableOpacity>
+            {locked ? (
+              <Text style={lineStyles.qty}>{quantity}</Text>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={lineStyles.qtyBtn}
+                  onPress={quantity === 1 ? onRemove : onDecrease}
+                  activeOpacity={0.75}
+                >
+                  <FontAwesome5
+                    name={quantity === 1 ? "trash-alt" : "minus"}
+                    size={11}
+                    color={quantity === 1 ? "#DC2626" : "#2563EB"}
+                  />
+                </TouchableOpacity>
+                <Text style={lineStyles.qty}>{quantity}</Text>
+                <TouchableOpacity style={lineStyles.qtyBtn} onPress={onIncrease} activeOpacity={0.75}>
+                  <FontAwesome5 name="plus" size={11} color="#2563EB" />
+                </TouchableOpacity>
+              </>
+            )}
+            {locked && (
+              <TouchableOpacity style={lineStyles.qtyBtn} onPress={onRemove} activeOpacity={0.75}>
+                <FontAwesome5 name="trash-alt" size={11} color="#DC2626" />
+              </TouchableOpacity>
+            )}
           </View>
         )}
       </View>
@@ -140,7 +288,6 @@ export const StaffOrderCartDialog: React.FC<StaffOrderCartDialogProps> = ({
   storeName,
   cart,
   totalItems,
-  totalPrice,
   itemLoading,
   onClose,
   onCheckout,
@@ -150,6 +297,19 @@ export const StaffOrderCartDialog: React.FC<StaffOrderCartDialogProps> = ({
 }) => {
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const prepSummary = useMemo(() => buildPrepSummary(cart), [cart]);
+  const groups = useMemo(() => groupLinesByParent(cart), [cart]);
+  const totals = useMemo(() => {
+    let service = 0;
+    let goods = 0;
+    for (const entry of cart) {
+      const hasChildren = cart.some((line) => line.parentId && line.parentId === entry.cartItemId);
+      const amount = chargedLineAmount(entry.product.price, entry.quantity, hasChildren);
+      if (entry.product.type === ProductType.SERVICE) service += amount;
+      else goods += amount;
+    }
+    return { service, goods, total: service + goods };
+  }, [cart]);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const panelMaxHeight = Math.min(820, Math.floor(windowHeight * 0.9));
   const panelMaxWidth = Math.min(640, Math.max(360, Math.floor(windowWidth * 0.9)));
@@ -208,22 +368,55 @@ export const StaffOrderCartDialog: React.FC<StaffOrderCartDialogProps> = ({
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
               >
-                {cart.map((entry) => (
-                  <CartLine
-                    key={entry.product.id}
-                    entry={entry}
-                    loading={!!itemLoading[entry.product.id]}
-                    onIncrease={() => onIncrease(entry.product)}
-                    onDecrease={() => onDecrease(entry.product)}
-                    onRemove={() => onRemove(entry)}
-                  />
-                ))}
+                {groups.map((group) => {
+                  const parent = group.parent;
+                  const parentKey = parent.cartItemId || parent.product.id;
+                  const hasChildren = group.children.length > 0;
+                  const expanded = !collapsed[parentKey];
+                  return (
+                    <View key={parentKey}>
+                      <CartLine
+                        entry={parent}
+                        locked={hasChildren}
+                        collapsible={hasChildren}
+                        expanded={expanded}
+                        onToggle={() =>
+                          setCollapsed((current) => ({ ...current, [parentKey]: expanded }))
+                        }
+                        loading={!!itemLoading[parent.cartItemId || parent.product.id]}
+                        onIncrease={() => onIncrease(parent)}
+                        onDecrease={() => onDecrease(parent)}
+                        onRemove={() => onRemove(parent)}
+                      />
+                      {hasChildren && expanded
+                        ? group.children.map((child) => (
+                            <SubItemLine
+                              key={child.cartItemId || `${parentKey}-${child.displayName}`}
+                              entry={child}
+                              loading={!!itemLoading[child.cartItemId || child.product.id]}
+                              onIncrease={() => onIncrease(child)}
+                              onDecrease={() => onDecrease(child)}
+                              onRemove={() => onRemove(child)}
+                            />
+                          ))
+                        : null}
+                    </View>
+                  );
+                })}
               </ScrollView>
 
               <View style={styles.footer}>
                 <View style={styles.totalRow}>
+                  <Text style={styles.splitLabel}>Dịch vụ</Text>
+                  <Text style={styles.splitValue}>{formatCurrencyVND(totals.service)}</Text>
+                </View>
+                <View style={styles.totalRow}>
+                  <Text style={styles.splitLabel}>Hàng hóa</Text>
+                  <Text style={styles.splitValue}>{formatCurrencyVND(totals.goods)}</Text>
+                </View>
+                <View style={styles.totalRow}>
                   <Text style={styles.totalLabel}>Tạm tính</Text>
-                  <Text style={styles.totalValue}>{formatCurrencyVND(totalPrice)}</Text>
+                  <Text style={styles.totalValue}>{formatCurrencyVND(totals.total)}</Text>
                 </View>
                 <TouchableOpacity style={styles.checkoutBtn} onPress={onCheckout} activeOpacity={0.88}>
                   <Text style={styles.checkoutBtnText}>Tiến hành đặt hàng</Text>
@@ -266,6 +459,11 @@ const lineStyles = StyleSheet.create({
     backgroundColor: "#F3F4F6",
   },
   body: { flex: 1, minWidth: 0 },
+  nameRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 },
+  nameFlex: { flex: 1, marginBottom: 0 },
+  nameWrap: { flex: 1, minWidth: 0 },
+  ellipsis: { width: "100%" },
+  note: { fontSize: 12, color: "#6B7280", marginTop: 2 },
   name: {
     fontSize: 14,
     fontWeight: "700",
@@ -273,6 +471,23 @@ const lineStyles = StyleSheet.create({
     lineHeight: 19,
     marginBottom: 4,
   },
+  subRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginLeft: 28,
+    marginBottom: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    backgroundColor: "#F8FAFC",
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+  },
+  subName: { fontSize: 13, fontWeight: "600", color: "#111827" },
+  subNote: { fontSize: 12, fontWeight: "400", color: "#6B7280" },
+  subPrice: { flexShrink: 0, fontSize: 13, fontWeight: "700", color: "#1E40AF" },
+  subQty: { marginTop: 0, flexShrink: 0 },
   unitPrice: { fontSize: 12, color: "#6B7280", marginBottom: 6 },
   prepChip: {
     flexDirection: "row",
@@ -409,6 +624,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   totalRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  splitLabel: { fontSize: 14, fontWeight: "600", color: "#6B7280" },
+  splitValue: { fontSize: 14, fontWeight: "700", color: "#374151" },
   totalLabel: { fontSize: 15, fontWeight: "600", color: "#374151" },
   totalValue: { fontSize: 20, fontWeight: "800", color: "#1E40AF" },
   checkoutBtn: {
