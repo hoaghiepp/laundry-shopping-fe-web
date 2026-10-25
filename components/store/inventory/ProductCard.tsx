@@ -1,6 +1,8 @@
+import { VariantGroupLabel } from '@/components/products/VariantGroupLabel';
 import { ProductType } from '@/constants/enum';
 import { ProductItem } from '@/models/model';
 import { formatCurrencyVND } from '@/utils/format';
+import { variantGroupOf } from '@/utils/variantGroup';
 import { FontAwesome5 } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import React from 'react';
@@ -37,6 +39,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       <View style={styles.itemInfo}>
         <Text style={styles.itemName}>{product.name}</Text>
         <Text style={styles.itemMeta}>SKU: {product.sku}</Text>
+        <VariantGroupLabel value={variantGroupOf(product)} style={styles.itemMeta} />
         {product.price > 0 && (
           <Text style={styles.itemPrice}>
             {formatCurrencyVND(product.price)}

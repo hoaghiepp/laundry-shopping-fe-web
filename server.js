@@ -12,7 +12,14 @@ const SERVER_BUILD_DIR = path.join(__dirname, "dist/server");
 
 const app = express();
 
-app.use(compression());
+app.use(
+  compression({
+    filter(req, res) {
+      if (req.url && req.url.includes("/orders/stream")) return false;
+      return compression.filter(req, res);
+    },
+  }),
+);
 app.disable("x-powered-by");
 
 process.env.NODE_ENV = "production";

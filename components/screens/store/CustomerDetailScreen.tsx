@@ -1,6 +1,6 @@
-import { ProductType } from '@/constants/enum';
+import { OrderStatus, ProductType } from '@/constants/enum';
 import { compatAlert } from '@/lib/compatAlert';
-import { orderService } from '@/services/api/orderService';
+import { Order, orderService } from '@/services/api/orderService';
 import { productService } from '@/services/api/productService';
 import { StoreCustomer } from '@/services/api/storeService';
 import { FontAwesome5 } from '@expo/vector-icons';
@@ -20,7 +20,26 @@ interface Props {
   customer: StoreCustomer;
   storeId: string;
   onBack: () => void;
+  fromDate?: Date;
+  toDate?: Date;
 }
+
+const orderStatusLabel = (status: OrderStatus | string) => {
+  switch (status) {
+    case OrderStatus.CREATED:
+      return 'Mới';
+    case OrderStatus.PROCESSING:
+      return 'Đang xử lý';
+    case OrderStatus.FINISHED:
+      return 'Hoàn tất';
+    case OrderStatus.CANCELLED:
+      return 'Đã hủy';
+    case OrderStatus.NEED_CUSTOMER_CONFIRMATION:
+      return 'Chờ xác nhận';
+    default:
+      return String(status);
+  }
+};
 
 interface ProductUsageStat {
   productId: string;
@@ -30,12 +49,21 @@ interface ProductUsageStat {
   totalIncome: number;
 }
 
-export const CustomerDetailScreen: React.FC<Props> = ({ customer, storeId, onBack }) => {
+export const CustomerDetailScreen: React.FC<Props> = ({
+  customer,
+  storeId,
+  onBack,
+  fromDate,
+  toDate,
+}) => {
   const [loading, setLoading] = useState(false);
   const [totalOrders, setTotalOrders] = useState(0);
   const [totalSpent, setTotalSpent] = useState(0);
   const [serviceStats, setServiceStats] = useState<ProductUsageStat[]>([]);
   const [goodsStats, setGoodsStats] = useState<ProductUsageStat[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [productNameById, setProductNameById] = useState<Record<string, string>>({});
 
   const formatCurrency = (amount: number) => {
     if (amount >= 1_000_000) return `${(amount / 1_000_000).toFixed(1)}M`;
@@ -57,16 +85,27 @@ export const CustomerDetailScreen: React.FC<Props> = ({ customer, storeId, onBac
     try {
       setLoading(true);
 
-      const response = await orderService.searchStoreOrders(
-        {
-          hub_id: storeId,
-          customer_id: customer.id,
-          fetch_order_items: true,
-        },
-        { page: 0, size: 1000 }
+      const searchBody: Parameters<typeof orderService.searchStoreOrders>[0] = {
+        hub_id: storeId,
+        customer_id: customer.id,
+        fetch_order_items: true,
+      };
+      if (fromDate && toDate) {
+        const from = new Date(fromDate);
+        from.setHours(0, 0, 0, 0);
+        const to = new Date(toDate);
+        to.setHours(23, 59, 59, 999);
+        searchBody.from_date = from.toISOString();
+        searchBody.to_date = to.toISOString();
+      }
+      const response = await orderService.searchStoreOrders(searchBody, { page: 0, size: 1000 });
+      const orderList = response.data || [];
+      setOrders(
+        [...orderList].sort(
+          (a, b) => new Date(b.created_date).getTime() - new Date(a.created_date).getTime()
+        )
       );
-      const orders = response.data || [];
-      setTotalOrders(orders.length);
+      setTotalOrders(orderList.length);
 
       // Cumulative by product_id
       const serviceQty = new Map<string, number>();
@@ -75,7 +114,7 @@ export const CustomerDetailScreen: React.FC<Props> = ({ customer, storeId, onBac
       const goodsIncome = new Map<string, number>();
       let spent = 0;
 
-      for (const order of orders) {
+      for (const order of orderList) {
         spent += order.final_total || 0;
         for (const item of order.order_items || []) {
           const ptype = String(item?.product_type ?? item?.type ?? 'GOODS');
@@ -104,6 +143,27 @@ export const CustomerDetailScreen: React.FC<Props> = ({ customer, storeId, onBac
       }
 
       setTotalSpent(spent);
+
+      const orderProductIds = new Set<string>();
+      for (const o of orderList) {
+        for (const item of o.order_items || []) {
+          const pid = String(item?.product_id ?? '');
+          if (pid) orderProductIds.add(pid);
+        }
+      }
+      if (orderProductIds.size) {
+        const namesRes = await productService.searchProducts(
+          0,
+          Math.max(200, orderProductIds.size),
+          undefined,
+          { store_id: storeId, ids: [...orderProductIds] }
+        );
+        const nameMap: Record<string, string> = {};
+        for (const pr of namesRes?.data || []) nameMap[pr.id] = pr.name;
+        setProductNameById(nameMap);
+      } else {
+        setProductNameById({});
+      }
 
       // Enrich with product info
       const enrichStats = async (
@@ -145,7 +205,7 @@ export const CustomerDetailScreen: React.FC<Props> = ({ customer, storeId, onBac
     } finally {
       setLoading(false);
     }
-  }, [storeId, customer.id]);
+  }, [storeId, customer.id, fromDate, toDate]);
 
   useEffect(() => {
     fetchData();
@@ -221,7 +281,14 @@ export const CustomerDetailScreen: React.FC<Props> = ({ customer, storeId, onBac
           <TouchableOpacity style={styles.backBtn} onPress={onBack} activeOpacity={0.75}>
             <FontAwesome5 name="arrow-left" size={16} color="#fff" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>Chi tiết khách hàng</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.headerTitle}>Chi tiết khách hàng</Text>
+            {fromDate && toDate ? (
+              <Text style={styles.headerPeriod}>
+                Kỳ {formatDate(fromDate.toISOString())} – {formatDate(toDate.toISOString())}
+              </Text>
+            ) : null}
+          </View>
           {loading && <ActivityIndicator size="small" color="#fff" />}
         </View>
 
@@ -286,6 +353,64 @@ export const CustomerDetailScreen: React.FC<Props> = ({ customer, storeId, onBac
           <>
             {renderTable(serviceStats, 'Dịch vụ', 'concierge-bell', '#8B5CF6')}
             {renderTable(goodsStats, 'Sản phẩm', 'box', '#F59E0B')}
+
+            <View style={styles.tableCard}>
+              <View style={styles.sectionHeader}>
+                <FontAwesome5 name="history" size={13} color="#2563EB" />
+                <Text style={[styles.sectionTitle, { color: '#2563EB' }]}>Lịch sử đơn hàng</Text>
+              </View>
+              {orders.length === 0 ? (
+                <Text style={styles.emptySection}>Không có đơn trong kỳ</Text>
+              ) : (
+                orders.map((order) => {
+                  const open = expandedOrderId === order.id;
+                  return (
+                    <View key={order.id} style={styles.orderBlock}>
+                      <TouchableOpacity
+                        style={styles.orderHead}
+                        onPress={() => setExpandedOrderId(open ? null : order.id)}
+                        activeOpacity={0.8}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.orderCode}>{order.code}</Text>
+                          <Text style={styles.orderMeta}>
+                            {formatDate(order.created_date)} · {orderStatusLabel(order.status)}
+                            {order.same_day_service ? ' · Trong ngày' : ''}
+                          </Text>
+                        </View>
+                        <Text style={styles.orderTotal}>{formatCurrency(order.final_total || 0)}đ</Text>
+                        <FontAwesome5
+                          name={open ? 'chevron-up' : 'chevron-down'}
+                          size={11}
+                          color="#9CA3AF"
+                          style={{ marginLeft: 8 }}
+                        />
+                      </TouchableOpacity>
+                      {open ? (
+                        <View style={styles.orderItems}>
+                          {order.same_day_service && (order.same_day_service_fee ?? 0) > 0 ? (
+                            <View style={styles.orderItemRow}>
+                              <Text style={styles.orderItemName}>Phí trong ngày</Text>
+                              <Text style={styles.orderSameDayFee}>
+                                {formatCurrency(order.same_day_service_fee || 0)}đ
+                              </Text>
+                            </View>
+                          ) : null}
+                          {(order.order_items || []).map((item: any, idx: number) => (
+                            <View key={item?.id ?? idx} style={styles.orderItemRow}>
+                              <Text style={styles.orderItemName} numberOfLines={2}>
+                                {item?.product_name ?? item?.name ?? productNameById[String(item?.product_id ?? '')] ?? 'Sản phẩm'}
+                              </Text>
+                              <Text style={styles.orderItemQty}>x{item?.adjusted_quantity ?? item?.quantity ?? 0}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  );
+                })
+              )}
+            </View>
           </>
         )}
       </ScrollView>
@@ -315,10 +440,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   headerTitle: {
-    flex: 1,
     fontSize: 18,
     fontWeight: 'bold',
     color: '#fff',
+  },
+  headerPeriod: {
+    fontSize: 11,
+    color: '#BFDBFE',
+    marginTop: 2,
   },
   customerCard: {
     flexDirection: 'row',
@@ -486,4 +615,22 @@ const styles = StyleSheet.create({
     color: '#111827',
     fontSize: 12,
   },
+  orderBlock: {
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+  },
+  orderHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  orderCode: { fontSize: 13, fontWeight: '700', color: '#111827' },
+  orderMeta: { fontSize: 11, color: '#6B7280', marginTop: 2 },
+  orderTotal: { fontSize: 13, fontWeight: '800', color: '#16a34a' },
+  orderItems: { paddingHorizontal: 12, paddingBottom: 10, gap: 6 },
+  orderItemRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
+  orderItemName: { flex: 1, fontSize: 12, color: '#374151' },
+  orderItemQty: { fontSize: 12, fontWeight: '700', color: '#6B7280' },
+  orderSameDayFee: { fontSize: 12, fontWeight: '700', color: '#B45309' },
 });

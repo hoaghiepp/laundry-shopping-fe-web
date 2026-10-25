@@ -1,6 +1,6 @@
+import { extractApiErrorMessage } from "@/services/api/apiUtils";
 import { logisticService } from "@/services/api/logisticService";
 import {
-  ITEM_TRACKING_STATUSES,
   orderItemLabel,
   trackingStatusLabel,
 } from "@/utils/serviceLines";
@@ -12,10 +12,16 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+
+const FACTORY_SCAN_STATUSES = [
+  { value: "WASHING", label: "Đang giặt" },
+  { value: "DRIED", label: "Đã sấy" },
+  { value: "IRONED", label: "Đã là" },
+  { value: "PACKED", label: "Đã đóng gói" },
+];
 
 interface GarmentScanDialogProps {
   visible: boolean;
@@ -39,33 +45,27 @@ export const GarmentScanDialog: React.FC<GarmentScanDialogProps> = ({
   onUpdated,
 }) => {
   const [currentStatus, setCurrentStatus] = useState(status || "");
-  const [bagId, setBagId] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   React.useEffect(() => {
     setCurrentStatus(status || "");
-    setBagId("");
     setError("");
   }, [status, barcode, visible]);
 
   const applyStatus = async (next: string) => {
     if (!barcode) return;
-    if (next === "IN_BAG" && !bagId.trim()) {
-      setError("Nhập mã bao khi chuyển sang Trong bao");
-      return;
-    }
     setSaving(true);
     setError("");
     try {
-      await logisticService.scanTrackingItem(barcode, {
+      await logisticService.scanTrackingItem({
+        barcode,
         status: next,
-        current_container_id: next === "IN_BAG" ? bagId.trim() : undefined,
       });
       setCurrentStatus(next);
       onUpdated?.();
     } catch (err: any) {
-      setError(err?.message || "Không thể cập nhật trạng thái");
+      setError(extractApiErrorMessage(err, "Không thể cập nhật trạng thái"));
     } finally {
       setSaving(false);
     }
@@ -86,18 +86,10 @@ export const GarmentScanDialog: React.FC<GarmentScanDialogProps> = ({
           {orderCode ? <Text style={styles.meta}>Đơn: {orderCode}</Text> : null}
           <Text style={styles.meta}>Trạng thái: {trackingStatusLabel(currentStatus)}</Text>
           {currentStoreId ? <Text style={styles.meta}>Cửa hàng: {currentStoreId}</Text> : null}
-          <Text style={styles.bagLabel}>Mã bao (khi cho vào bao)</Text>
-          <TextInput
-            style={styles.input}
-            value={bagId}
-            onChangeText={setBagId}
-            placeholder="Mã bao"
-            placeholderTextColor="#9CA3AF"
-          />
           {error ? <Text style={styles.error}>{error}</Text> : null}
           {saving ? <ActivityIndicator color="#2563EB" style={{ marginVertical: 12 }} /> : null}
           <ScrollView style={styles.list}>
-            {ITEM_TRACKING_STATUSES.map((item) => (
+            {FACTORY_SCAN_STATUSES.map((item) => (
               <TouchableOpacity
                 key={item.value}
                 style={[styles.statusBtn, currentStatus === item.value && styles.statusBtnOn]}

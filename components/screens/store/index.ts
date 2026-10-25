@@ -1,7 +1,9 @@
 export { AddInventoryScreen } from './AddInventoryScreen';
 export { CustomerDetailScreen } from './CustomerDetailScreen';
 export { CustomerListScreen } from './CustomerListScreen';
+export { CustomerScreen } from './CustomerScreen';
 export { InventoryScreen } from './InventoryScreen';
+export { ItemTrackingTab } from './ItemTrackingTab';
 export { LogisticsScreen } from './LogisticsScreen';
 export { OrdersScreen } from './OrdersScreen';
 export { ProcessDetailScreen } from './ProcessDetailScreen';

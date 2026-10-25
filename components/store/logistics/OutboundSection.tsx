@@ -8,7 +8,7 @@ import {
   View
 } from 'react-native';
 import { LogisticsSummaryCard } from './LogisticsSummaryCard';
-import { formatDate, getStatusDisplay } from './logisticsUtils';
+import { formatDate, getStatusDisplay, tripTypeLabel } from './logisticsUtils';
 import { TripHistoryCard } from './TripHistoryCard';
 
 export interface Trip {
@@ -17,6 +17,7 @@ export interface Trip {
   source_store_id: string;
   destination_store_id: string;
   status: LogisticTripStatus;
+  trip_type?: string;
   created_date: string;
   last_modified_date: string;
 }
@@ -70,7 +71,7 @@ export const OutboundSection: React.FC<OutboundSectionProps> = ({
               key={trip.id}
               tripCode={trip.trip_code}
               date={formatDate(trip.created_date)}
-              location={`Đến ${destinationName}`}
+              location={`${tripTypeLabel(trip.trip_type) || 'Chuyến'} · Đến ${destinationName}`}
               statusDisplay={statusDisplay}
               onPress={() => onTripPress(trip.id)}
             />

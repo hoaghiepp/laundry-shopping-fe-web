@@ -1,14 +1,14 @@
 import { AddAddressScreenWrapper } from "@/components/address";
+import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
-import { DeliveryOptions, PickupMethod, SecureStoreKeys } from "@/constants/enum";
+import { DeliveryOptions, PickupMethod } from "@/constants/enum";
 import { storeService } from "@/services/api";
 import { cartService } from "@/services/api/cartService";
-import { customerAddressService, CustomerProfile, customerService } from "@/services/api/customerService";
+import { customerAddressService } from "@/services/api/customerService";
 import { formatCurrencyVND } from "@/utils/format";
 import { chargedLineAmount, groupLinesByParent, parentIdOf, subItemDisplayName } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import * as SecureStore from "@/lib/secureStorage";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -36,6 +36,7 @@ interface CartItem {
   quantity: number;
   storeId: string;
   thumbnailUrl?: string;
+  variantGroup?: string | null;
   packageDiscount?: number;
 }
 
@@ -97,7 +98,6 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   const [storeDeliveryOptions, setStoreDeliveryOptions] = useState<Record<string, DeliveryOptions>>({});
   const [storePickupMethods, setStorePickupMethods] = useState<Record<string, PickupMethod>>({});
   const [showAddAddressScreen, setShowAddAddressScreen] = useState(false);
-  const [customerProfile, setCustomerProfile] = useState<CustomerProfile | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [pendingCheckout, setPendingCheckout] = useState<{
     address: typeof selectedAddress;
@@ -148,6 +148,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
           quantity: Number(cartItem.quantity) || 1,
           storeId: cartItem.product?.store_id || "",
           thumbnailUrl: cartItem.product?.thumbnail_url || undefined,
+          variantGroup: cartItem.product?.variant_group || cartItem.product?.variantGroup || null,
           packageDiscount: 0, // Can be calculated from packages if needed
         };
         });
@@ -212,34 +213,6 @@ export const CartScreen: React.FC<CartScreenProps> = ({
     },
     [fetchCart, onUpdateQuantity]
   );
-
-  const fetchCustomerProfile = useCallback(async () => {
-    try {
-      // Try to get from SecureStore first
-      const profileJson = await SecureStore.getItemAsync(SecureStoreKeys.CUSTOMER_PROFILE);
-      if (profileJson) {
-        const profileData: CustomerProfile = JSON.parse(profileJson);
-        setCustomerProfile(profileData);
-      } else {
-        // If not in SecureStore, fetch from API
-        const response = await customerService.getCustomerProfile();
-        if (response?.data) {
-          setCustomerProfile(response.data);
-          // Save to SecureStore
-          await SecureStore.setItemAsync(
-            SecureStoreKeys.CUSTOMER_PROFILE,
-            JSON.stringify(response.data)
-          );
-        }
-      }
-    } catch (error: any) {
-      const errorMessage = error?.message || "";
-      if (!errorMessage.includes("Token not found")) {
-        console.error("Failed to fetch customer profile:", error);
-      }
-    }
-  }, []);
-
 
   const fetchAddress = useCallback(async () => {
     try {
@@ -383,8 +356,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
   useEffect(() => {
     fetchCart();
     fetchAddress();
-    fetchCustomerProfile();
-  }, [fetchCart, fetchAddress, fetchCustomerProfile]);
+  }, [fetchCart, fetchAddress]);
 
 
   // Fetch store profiles when items change
@@ -518,13 +490,6 @@ export const CartScreen: React.FC<CartScreenProps> = ({
       }
     }
   };
-
-  const subtotal = items.reduce(
-    (sum, item) => sum + (item.price || 0) * (item.quantity || 1),
-    0
-  );
-  const walletBalance = customerProfile?.wallet_balance || 0;
-  const total = Math.max(0, subtotal - walletBalance);
 
   const getTypeLabel = (type: string) => {
     return type === "SERVICE" ? "Dịch vụ" : "Hàng hóa";
@@ -791,6 +756,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                                     {item.name}
                                   </Text>
                                 )}
+                                <VariantGroupLabel value={item.variantGroup} style={styles.itemType} />
                                 {item.note ? (
                                   <Text style={styles.itemType} numberOfLines={2}>{item.note}</Text>
                                 ) : null}
@@ -991,7 +957,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                             // Store checkout data for both orders
                             setPendingCheckout({
                               address: selectedAddress,
-                              walletAmount: walletBalance,
+                              walletAmount: 0,
                               deliveryOption: DeliveryOptions.SEPARATE, // Mark as SEPARATE to trigger split
                               pickupMethod: storePickupMethods[storeId] || PickupMethod.SELF,
                               storeId,
@@ -1004,7 +970,7 @@ export const CartScreen: React.FC<CartScreenProps> = ({
                             // Store checkout data and show confirm dialog
                             setPendingCheckout({
                               address: selectedAddress,
-                              walletAmount: walletBalance,
+                              walletAmount: 0,
                               deliveryOption,
                               pickupMethod: storePickupMethods[storeId] || PickupMethod.SELF,
                               storeId,
@@ -1180,8 +1146,8 @@ export const CartScreen: React.FC<CartScreenProps> = ({
           pendingCheckout?.deliveryOption === DeliveryOptions.SEPARATE && 
           pendingCheckout.serviceItems && 
           pendingCheckout.goodsItems
-            ? `Bạn có chắc chắn muốn đặt hàng này không?\n\nĐơn hàng sẽ được tách thành:\n- 1 đơn cho dịch vụ (${pendingCheckout.serviceItems.length} sản phẩm)\n- 1 đơn cho hàng hóa (${pendingCheckout.goodsItems.length} sản phẩm)`
-            : "Bạn có chắc chắn muốn đặt hàng này không?"
+            ? `Bạn có chắc chắn muốn đặt hàng này không?\n\nĐơn hàng sẽ được tách thành:\n- 1 đơn cho dịch vụ (${pendingCheckout.serviceItems.length} sản phẩm)\n- 1 đơn cho hàng hóa (${pendingCheckout.goodsItems.length} sản phẩm)\n\nTiền mặt do cửa hàng xác nhận. Ví không bị trừ.`
+            : "Bạn có chắc chắn muốn đặt hàng này không? Tiền mặt do cửa hàng xác nhận. Ví không bị trừ."
         }
         confirmText="Xác nhận"
         cancelText="Hủy"

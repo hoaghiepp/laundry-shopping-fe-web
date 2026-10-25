@@ -48,18 +48,8 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
   };
 
   const handleRegister = () => {
-    if (!name) {
-      Alert.alert('Lỗi', 'Vui lòng nhập họ và tên');
-      return;
-    }
-
-    if (!phone) {
+    if (!phone.trim()) {
       Alert.alert('Lỗi', 'Vui lòng nhập số điện thoại');
-      return;
-    }
-
-    if (!email) {
-      Alert.alert('Lỗi', 'Vui lòng nhập email');
       return;
     }
 
@@ -122,15 +112,7 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         )}
 
         <AuthInput
-          label="HỌ VÀ TÊN"
-          icon="user"
-          placeholder="Nguyễn Văn A"
-          value={name}
-          onChangeText={setName}
-        />
-
-        <AuthInput
-          label="SỐ ĐIỆN THOẠI"
+          label="SỐ ĐIỆN THOẠI *"
           icon="phone-alt"
           placeholder="0912 xxx xxx"
           keyboardType="phone-pad"
@@ -139,10 +121,19 @@ export const RegisterForm: React.FC<RegisterFormProps> = ({
         />
 
         <AuthInput
-          label="EMAIL"
+          label="HỌ VÀ TÊN"
+          icon="user"
+          placeholder="Nguyễn Văn A"
+          value={name}
+          onChangeText={setName}
+        />
+
+        <AuthInput
+          label="EMAIL (không bắt buộc)"
           icon="envelope"
           placeholder="example@gmail.com"
           keyboardType="email-address"
+          autoCapitalize="none"
           value={email}
           onChangeText={setEmail}
         />

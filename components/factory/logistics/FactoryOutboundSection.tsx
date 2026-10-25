@@ -1,6 +1,6 @@
 import { LogisticsSummaryCard } from '@/components/store/logistics/LogisticsSummaryCard';
 import { TripHistoryCard } from '@/components/store/logistics/TripHistoryCard';
-import { formatDate, getStatusDisplay } from '@/components/store/logistics/logisticsUtils';
+import { formatDate, getStatusDisplay, tripTypeLabel } from '@/components/store/logistics/logisticsUtils';
 import { FontAwesome5 } from '@expo/vector-icons';
 import React from 'react';
 import {
@@ -60,7 +60,7 @@ export const FactoryOutboundSection: React.FC<FactoryOutboundSectionProps> = ({
               key={trip.id}
               tripCode={trip.trip_code}
               date={formatDate(trip.created_date)}
-              location={`Đến ${destinationName}`}
+              location={`${tripTypeLabel((trip as { trip_type?: string }).trip_type) || 'Chuyến'} · Đến ${destinationName}`}
               statusDisplay={statusDisplay}
               onPress={() => onTripPress(trip.id)}
             />

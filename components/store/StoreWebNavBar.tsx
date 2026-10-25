@@ -17,7 +17,9 @@ const tabs: { tab: StoreTabType; label: string; icon: string }[] = [
   { tab: StoreTabType.ORDERS, label: "Đơn hàng", icon: "clipboard-list" },
   { tab: StoreTabType.INVENTORY, label: "Kho", icon: "boxes" },
   { tab: StoreTabType.LOGISTICS, label: "Giao nhận", icon: "truck-moving" },
+  { tab: StoreTabType.ITEM_SEARCH, label: "Tra cứu", icon: "search" },
   { tab: StoreTabType.REPORT, label: "Báo cáo", icon: "chart-pie" },
+  { tab: StoreTabType.CUSTOMERS, label: "Khách hàng", icon: "users" },
 ];
 
 export const StoreWebNavBar: React.FC<StoreWebNavBarProps> = ({
@@ -91,12 +93,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     flex: 1,
     gap: 4,
-    flexWrap: "wrap",
+    flexWrap: "nowrap",
+    overflow: "scroll",
   },
   tab: {
     flexDirection: "row",
     alignItems: "center",
+    flexShrink: 0,
     gap: 8,
+    minHeight: 44,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 8,

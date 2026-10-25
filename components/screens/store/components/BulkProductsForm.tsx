@@ -1,6 +1,7 @@
 import { ProductStatus, ProductType } from "@/constants/enum";
 import { compatAlert } from "@/lib/compatAlert";
 import { AddProductBulkRequest, AddProductRequest, productService } from "@/services/api/productService";
+import { VARIANT_GROUP_MAX_LENGTH } from "@/utils/variantGroup";
 import { uploadService } from "@/services/api/uploadService";
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -21,6 +22,7 @@ const emptyRow = (): BulkProductRowValue => ({
   stock_quantity: "",
   unit: "",
   description: "",
+  variant_group: "",
   category_ids: [],
   thumbnailImage: null,
   galleryImages: [],
@@ -52,6 +54,9 @@ export const BulkProductsForm: React.FC<BulkProductsFormProps> = ({
       }
       if (r.type === ProductType.ASSET) {
         return `Bulk mode chưa hỗ trợ loại ASSET (Sản phẩm ${i + 1})`;
+      }
+      if (r.variant_group.trim().length > VARIANT_GROUP_MAX_LENGTH) {
+        return `Nhóm biến thể tối đa 100 ký tự (Sản phẩm ${i + 1})`;
       }
     }
     return null;
@@ -112,6 +117,7 @@ export const BulkProductsForm: React.FC<BulkProductsFormProps> = ({
             thumbnail_url: thumbRes.data.url,
             gallery_urls,
             priority: 1,
+            ...(r.variant_group.trim() ? { variant_group: r.variant_group.trim() } : {}),
           },
         });
       }
@@ -177,6 +183,7 @@ export const BulkProductsForm: React.FC<BulkProductsFormProps> = ({
       <View style={styles.rows}>
         {rows.map((row, idx) => (
           <BulkProductRow
+            storeId={storeId}
             key={`row-${idx}`}
             index={idx}
             categories={categories}

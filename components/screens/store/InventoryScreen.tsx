@@ -123,7 +123,10 @@ export const InventoryScreen: React.FC<InventoryScreenProps> = ({
       if (item.type !== ProductType.GOODS) return false;
       if (!matchesListingTab(item.status, listingTab)) return false;
       if (!normalizedQuery) return true;
-      return item.name?.toLowerCase().includes(normalizedQuery);
+      return (
+        item.name?.toLowerCase().includes(normalizedQuery) ||
+        (item.variant_group || "").toLowerCase().includes(normalizedQuery)
+      );
     });
   }, [inventoryItems, listingTab, normalizedQuery]);
 
@@ -132,7 +135,10 @@ export const InventoryScreen: React.FC<InventoryScreenProps> = ({
       if (item.type !== ProductType.SERVICE) return false;
       if (!matchesListingTab(item.status, listingTab)) return false;
       if (!normalizedQuery) return true;
-      return item.name?.toLowerCase().includes(normalizedQuery);
+      return (
+        item.name?.toLowerCase().includes(normalizedQuery) ||
+        (item.variant_group || "").toLowerCase().includes(normalizedQuery)
+      );
     });
   }, [inventoryItems, listingTab, normalizedQuery]);
 
@@ -268,7 +274,7 @@ export const InventoryScreen: React.FC<InventoryScreenProps> = ({
         <TextInput
           value={searchQuery}
           onChangeText={setSearchQuery}
-          placeholder="Tìm theo tên..."
+          placeholder="Tìm theo tên hoặc nhóm..."
           placeholderTextColor="#9CA3AF"
           style={styles.searchInput}
           autoCapitalize="none"

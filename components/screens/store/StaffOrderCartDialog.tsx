@@ -1,4 +1,6 @@
+import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
 import { ProductType } from "@/constants/enum";
+import { variantGroupOf } from "@/utils/variantGroup";
 import { ProductItem } from "@/models/model";
 import { formatCurrencyVND } from "@/utils/format";
 import { chargedLineAmount, groupLinesByParent } from "@/utils/serviceLines";
@@ -228,6 +230,7 @@ const CartLine = ({
           <Text style={[lineStyles.name, lineStyles.nameFlex]} numberOfLines={2}>
             {entry.displayName || product.name}
           </Text>
+          <VariantGroupLabel value={variantGroupOf(product)} style={lineStyles.unitPrice} />
         </View>
         {entry.note ? (
           <Text style={lineStyles.note} numberOfLines={2}>{entry.note}</Text>

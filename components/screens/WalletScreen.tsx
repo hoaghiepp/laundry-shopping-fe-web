@@ -80,9 +80,10 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
   };
 
   const handleTopUpPress = () => {
-    setShowTopUpDialog(true);
-    setTopUpAmount('');
-    setAmountError('');
+    Alert.alert(
+      'Nạp ví tạm tắt',
+      'Nạp ví qua VietQR đang tạm ngưng. Số dư hiện có vẫn dùng để mua gói.'
+    );
   };
 
   const handleConfirmTopUp = async () => {

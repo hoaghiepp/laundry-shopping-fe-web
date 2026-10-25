@@ -71,6 +71,21 @@ export const StoreBottomNav: React.FC<StoreBottomNavProps> = ({
 
         <TouchableOpacity
           style={styles.navItem}
+          onPress={() => onTabChange(StoreTabType.ITEM_SEARCH)}
+          activeOpacity={0.7}
+        >
+          <FontAwesome5
+            name="search"
+            size={18}
+            color={activeTab === StoreTabType.ITEM_SEARCH ? '#2563EB' : '#9CA3AF'}
+          />
+          <Text style={[styles.navText, activeTab === StoreTabType.ITEM_SEARCH && styles.activeText]}>
+            Tra cứu
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.navItem}
           onPress={() => onTabChange(StoreTabType.REPORT)}
           activeOpacity={0.7}
         >
@@ -83,6 +98,22 @@ export const StoreBottomNav: React.FC<StoreBottomNavProps> = ({
             Báo cáo
           </Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.navItem}
+          onPress={() => onTabChange(StoreTabType.CUSTOMERS)}
+          activeOpacity={0.7}
+        >
+          <FontAwesome5
+            name="users"
+            size={18}
+            color={activeTab === StoreTabType.CUSTOMERS ? '#2563EB' : '#9CA3AF'}
+          />
+          <Text style={[styles.navText, activeTab === StoreTabType.CUSTOMERS && styles.activeText]}>
+            Khách hàng
+          </Text>
+        </TouchableOpacity>
+
       </View>
 
       {/* Floating create-order button (absolute centered) */}
@@ -129,7 +160,7 @@ const styles = StyleSheet.create({
   navItem: {
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: 56,
+    minWidth: 48,
   },
 
   navText: {

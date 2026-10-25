@@ -1,4 +1,5 @@
 import { ProductStatus, ProductType } from "@/constants/enum";
+import { VariantGroupPicker } from "@/components/products/VariantGroupPicker";
 import { formatCurrencyVND } from "@/utils/format";
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -20,6 +21,7 @@ export interface BulkProductRowValue {
   stock_quantity: string; // digits only
   unit: string;
   description: string;
+  variant_group: string;
   category_ids: string[];
   thumbnailImage: ImagePicker.ImagePickerAsset | null;
   galleryImages: ImagePicker.ImagePickerAsset[];
@@ -30,6 +32,7 @@ export interface BulkProductRowValue {
 interface BulkProductRowProps {
   index: number;
   categories: any[];
+  storeId?: string;
   value: BulkProductRowValue;
   onChange: (next: BulkProductRowValue) => void;
   onRemove: () => void;
@@ -39,6 +42,7 @@ interface BulkProductRowProps {
 export const BulkProductRow: React.FC<BulkProductRowProps> = ({
   index,
   categories,
+  storeId,
   value,
   onChange,
   onRemove,
@@ -282,6 +286,18 @@ export const BulkProductRow: React.FC<BulkProductRowProps> = ({
                 style={styles.input}
                 placeholder="cái"
                 placeholderTextColor="#9CA3AF"
+              />
+            </View>
+          </View>
+
+          <View style={styles.gridRow}>
+            <View style={styles.col}>
+              <Text style={styles.label}>Nhóm biến thể</Text>
+              <VariantGroupPicker
+                storeId={storeId}
+                value={value.variant_group}
+                onChange={(variant_group) => onChange({ ...value, variant_group })}
+                inputStyle={styles.input}
               />
             </View>
           </View>

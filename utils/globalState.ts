@@ -11,6 +11,7 @@ let globalUserRole: string | string[] | null = null;
  */
 export const setGlobalUserRole = (role: string | string[] | null): void => {
   globalUserRole = role;
+  emitRoleChange();
 };
 
 /**
@@ -26,6 +27,7 @@ export const getGlobalUserRole = (): string | string[] | null => {
  */
 export const clearGlobalUserRole = (): void => {
   globalUserRole = null;
+  emitRoleChange();
 };
 
 /**
@@ -57,3 +59,18 @@ export const isAdmin = (): boolean => {
 export const isSuperAdmin = (): boolean => {
   return hasRole('ROLE_SUPER_ADMIN');
 };
+
+type RoleListener = () => void;
+const roleListeners = new Set<RoleListener>();
+
+/** Fired when the in-memory role is set or cleared (login, logout, session expiry). */
+export function subscribeUserRole(listener: RoleListener): () => void {
+  roleListeners.add(listener);
+  return () => {
+    roleListeners.delete(listener);
+  };
+}
+
+function emitRoleChange(): void {
+  roleListeners.forEach((listener) => listener());
+}

@@ -13,10 +13,12 @@ import {
   CustomerProfile,
   customerService,
 } from "@/services/api/customerService";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import { Order, orderService } from "@/services/api/orderService";
 import { packageService } from "@/services/api/packageProductService";
-import { cacheManager } from "@/services/cache";
+import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
 import { formatCurrencyVND } from "@/utils/format";
+import { variantGroupOf } from "@/utils/variantGroup";
 import { groupLinesByParent, lineAmount } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -151,6 +153,8 @@ const getPaymentStatusDisplay = (status: PaymentStatus) => {
   switch (status) {
     case PaymentStatus.UNPAID:
       return { text: "Chưa thanh toán", color: "#B91C1C", bg: "#FEE2E2" };
+    case PaymentStatus.WAITING_CONFIRM:
+      return { text: "Chờ xác nhận tiền", color: "#92400E", bg: "#FEF3C7" };
     case PaymentStatus.PARTIAL_PAID:
       return { text: "Thanh toán một phần", color: "#F59E0B", bg: "#FEF3C7" };
     case PaymentStatus.PAID:
@@ -245,6 +249,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
   const [orderDetail, setOrderDetail] = useState<OrderDetail>(initialOrder);
   const [loading, setLoading] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
   const [incidents, setIncidents] = useState<any[]>([]);
   const [loadingIncidents, setLoadingIncidents] = useState(false);
@@ -279,16 +284,16 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
   }, [selectedPackages]);
 
   // Fetch order with logs function
-  const fetchOrderWithLogs = async () => {
+  const fetchOrderWithLogs = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) {
+        setLoading(true);
+        setOrderDetail(initialOrder);
+      }
       console.log(
         "fetchOrderWithLogs - Fetching order with code:",
         initialOrder.code
       );
-
-      // Set initial order immediately to show correct order code
-      setOrderDetail(initialOrder);
 
       // Get customer ID from secure store
       const profileJson = await SecureStore.getItemAsync(
@@ -327,16 +332,17 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
           response.data[0].code
         );
         setOrderDetail(response.data[0] as OrderDetail);
-      } else {
+      } else if (!silent) {
         console.log("fetchOrderWithLogs - No data, using initialOrder");
         setOrderDetail(initialOrder);
       }
     } catch (error) {
       console.error("Error fetching order with logs:", error);
-      // Fallback to initial order if fetch fails
-      setOrderDetail(initialOrder);
+      if (!silent) {
+        setOrderDetail(initialOrder);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -430,6 +436,23 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
     fetchOrderWithLogs();
     fetchIncidents();
   }, [initialOrder.code, initialOrder.id]);
+
+  useOrderStream({
+    onReady: () => {
+      fetchOrderWithLogs(true);
+      fetchIncidents();
+    },
+    onOrderUpdated: (event) => {
+      if (
+        event.order_id !== initialOrder.id &&
+        event.order_code !== initialOrder.code
+      ) {
+        return;
+      }
+      fetchOrderWithLogs(true);
+      fetchIncidents();
+    },
+  });
 
   // Fetch packages and promotions when order needs confirmation (and not for incidents)
   useEffect(() => {
@@ -587,93 +610,25 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
       (orderDetail.additional_fee || 0)
   );
 
-  // Handle confirm with wallet payment
-  const handleConfirmWithWallet = async () => {
+  const handleConfirmSurcharge = async () => {
     try {
       setIsConfirming(true);
 
-      // Fetch newest customer profile to get latest wallet_balance
-      const profileResponse = await customerService.getCustomerProfile();
-      const customerProfile = profileResponse.data;
-
-      if (!customerProfile) {
-        Alert.alert("Lỗi", "Không thể lấy thông tin khách hàng");
-        return;
-      }
-
-      // Calculate remaining amount to pay (after discounts)
-      const packageDeduction = calculatePackageDeduction();
-      const promotionDiscount = calculatePromotionDiscount();
-      const newFinalTotal = Math.max(
-        0,
-        (orderDetail.sub_total || 0) -
-          promotionDiscount -
-          packageDeduction +
-          (orderDetail.shipping_fee || 0) +
-          (orderDetail.additional_fee || 0)
-      );
-
-      const remainingAmount = newFinalTotal - (orderDetail.wallet_deduction || 0);
-
-      // Calculate max wallet payment (min of wallet_balance and remaining amount)
-      const maxWalletPayment = Math.min(
-        customerProfile.wallet_balance || 0,
-        Math.max(0, remainingAmount)
-      );
-
-      const walletBalance = customerProfile.wallet_balance || 0;
       const confirmSurchargeRequest: ConfirmSurchargeRequest = {
-        wallet_payment_amount: maxWalletPayment,
         customer_package_ids: selectedPackages.map((pkg) => pkg.id),
         customer_promotion_id: selectedPromotion?.id,
       };
 
-      console.log("confirmSurchargeRequest", confirmSurchargeRequest);
-
-      // Check if wallet balance is smaller than real charge
-      if (walletBalance < remainingAmount) {
-        const shortage = remainingAmount - walletBalance;
-        Alert.alert(
-          "Số dư ví không đủ",
-          `Số dư ví của bạn (${formatCurrencyVND(walletBalance)}) không đủ để thanh toán. Còn thiếu ${formatCurrencyVND(shortage)}. Vui lòng nạp thêm tiền vào ví.`,
-          [{ text: "OK" }]
-        );
-        return;
-      }
-
-      // Call confirm surcharge with wallet payment
       await customerService.confirmSurcharge(
         orderDetail.id,
         confirmSurchargeRequest
       );
 
-      // Invalidate customer profile cache to refresh wallet balance
-      cacheManager.invalidate("customer:profile");
-
-      // Refresh order details
       await fetchOrderWithLogs();
 
-      // Update customer profile in SecureStore to reflect new wallet balance
-      try {
-        const updatedProfile = await customerService.getCustomerProfile();
-        console.log("updatedProfile", updatedProfile);
-        if (updatedProfile?.data) {
-          await SecureStore.setItemAsync(
-            SecureStoreKeys.CUSTOMER_PROFILE,
-            JSON.stringify(updatedProfile.data)
-          );
-        }
-      } catch (error) {
-        console.error("Error updating customer profile:", error);
-      }
-
       Alert.alert(
-        "Thành công",
-        `Đã xác nhận đơn hàng${
-          maxWalletPayment > 0
-            ? ` và thanh toán ${formatCurrencyVND(maxWalletPayment)} từ ví`
-            : ""
-        }`,
+        "Đã xác nhận hóa đơn",
+        "Đơn chuyển sang đang xử lý. Cửa hàng sẽ xác nhận khi nhận đủ tiền mặt.",
         [
           {
             text: "OK",
@@ -686,13 +641,32 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
         ]
       );
     } catch (error: any) {
-      console.error("Error confirming order with wallet:", error);
+      console.error("Error confirming surcharge:", error);
       Alert.alert(
         "Lỗi",
         error.message || "Không thể xác nhận đơn hàng. Vui lòng thử lại."
       );
     } finally {
       setIsConfirming(false);
+    }
+  };
+
+  const handleSubmitPayment = async () => {
+    try {
+      setIsPaying(true);
+      await orderService.pay(orderDetail.id);
+      await fetchOrderWithLogs();
+      Alert.alert(
+        "Đã gửi thanh toán",
+        "Đơn đang chờ cửa hàng xác nhận đã nhận tiền mặt."
+      );
+    } catch (error: any) {
+      Alert.alert(
+        "Lỗi",
+        error.message || "Không thể gửi thanh toán. Vui lòng thử lại."
+      );
+    } finally {
+      setIsPaying(false);
     }
   };
 
@@ -979,9 +953,29 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
               </Text>
             </View>
           </View>
-          <Text style={styles.orderDate}>
+            <Text style={styles.orderDate}>
             Ngày đặt: {formatDate(orderDetail.created_date)}
           </Text>
+          {orderDetail.payment_status === PaymentStatus.WAITING_CONFIRM && (
+            <Text style={styles.paymentHint}>
+              Cửa hàng chưa xác nhận đã nhận tiền mặt.
+            </Text>
+          )}
+          {orderDetail.payment_status === PaymentStatus.UNPAID &&
+            orderDetail.status !== OrderStatus.CANCELLED &&
+            orderDetail.status !== OrderStatus.CUSTOMER_REJECTED &&
+            orderDetail.status !== OrderStatus.FINISHED && (
+              <TouchableOpacity
+                style={[styles.payButton, isPaying && styles.confirmButtonDisabled]}
+                onPress={handleSubmitPayment}
+                disabled={isPaying}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.payButtonText}>
+                  {isPaying ? "Đang gửi..." : "Gửi thanh toán"}
+                </Text>
+              </TouchableOpacity>
+            )}
         </View>
 
         {/* Shipping Status - Collapsible */}
@@ -1109,6 +1103,12 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
                       Phân loại hàng: {item.product_variant}
                     </Text>
                   )}
+                  <VariantGroupLabel
+                    value={variantGroupOf(
+                      (item as { product?: { variant_group?: string | null; variantGroup?: string | null } }).product
+                    ) || (item as { variant_group?: string | null }).variant_group}
+                    style={styles.productVariant}
+                  />
 
                   <Text style={styles.productQuantity}>
                     x{item.quantity} {item.unit || "cái"}
@@ -1156,6 +1156,12 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
                         </Text>
                       </View>
                     )}
+                    <VariantGroupLabel
+                      value={variantGroupOf(
+                        (item as { product?: { variant_group?: string | null; variantGroup?: string | null } }).product
+                      ) || (item as { variant_group?: string | null }).variant_group}
+                      style={styles.serviceName}
+                    />
                   </View>
 
                   <View style={styles.weightsRow}>
@@ -1714,8 +1720,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
               <Text style={styles.confirmHeaderText}>Xác nhận đơn hàng</Text>
             </View>
             <Text style={styles.confirmDescription}>
-              Vui lòng xác nhận hoặc từ chối để cửa hàng tiếp tục xử lý đơn hàng
-              này.
+              Xác nhận hóa đơn để cửa hàng xử lý. Tiền mặt do cửa hàng xác nhận, ví không bị trừ.
             </Text>
             <View style={styles.confirmActions}>
               <TouchableOpacity
@@ -1736,7 +1741,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
                   styles.confirmButton,
                   isConfirming && styles.confirmButtonDisabled,
                 ]}
-                onPress={handleConfirmWithWallet}
+                onPress={handleConfirmSurcharge}
                 activeOpacity={1}
                 disabled={isConfirming}
               >
@@ -2014,6 +2019,23 @@ const styles = StyleSheet.create({
   orderDate: {
     fontSize: 12,
     color: "#6B7280",
+  },
+  paymentHint: {
+    marginTop: 8,
+    fontSize: 13,
+    color: "#92400E",
+  },
+  payButton: {
+    marginTop: 12,
+    backgroundColor: "#2563EB",
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  payButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
   },
   timelineCard: {
     backgroundColor: "#FFFFFF",

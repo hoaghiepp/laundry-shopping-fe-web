@@ -1,4 +1,6 @@
+import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
 import { ProductItem } from "@/models/model";
+import { variantGroupOf } from "@/utils/variantGroup";
 import { formatCurrencyVND } from "@/utils/format";
 import { Image } from "expo-image";
 import React from "react";
@@ -32,6 +34,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({
       <Text style={styles.name} numberOfLines={1}>
         {product.name}
       </Text>
+      <VariantGroupLabel value={variantGroupOf(product)} style={styles.stock} />
       {product.type === "GOODS" && (
         <Text style={styles.stock} numberOfLines={1}>
           Sô lượng: {product.stock_quantity ?? 0}

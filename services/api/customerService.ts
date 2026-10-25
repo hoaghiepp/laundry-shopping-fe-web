@@ -25,7 +25,6 @@ export interface CustomerProfile {
 
 export interface UpdateCustomerProfileRequest {
   full_name?: string;
-  phone_number?: string;
   gender?: Gender;
   avatar_url?: string;
   birth_date?: string;
@@ -39,6 +38,7 @@ export interface CustomerProfileResponse {
 }
 
 export interface ConfirmSurchargeRequest {
+  /** Ignored by the API. Confirming a bill does not debit the wallet. */
   wallet_payment_amount?: number;
   customer_package_ids?: string[];
   customer_promotion_id?: string;

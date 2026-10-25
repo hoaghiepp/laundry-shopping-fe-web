@@ -15,18 +15,29 @@ import {
 
 interface Props {
   storeId: string;
-  onBack: () => void;
+  onBack?: () => void;
   onSelectCustomer: (customer: StoreCustomer) => void;
+  embedded?: boolean;
 }
 
 const PAGE_SIZE = 20;
 
-export const CustomerListScreen: React.FC<Props> = ({ storeId, onBack, onSelectCustomer }) => {
+export const CustomerListScreen: React.FC<Props> = ({
+  storeId,
+  onBack,
+  onSelectCustomer,
+  embedded = false,
+}) => {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [items, setItems] = useState<StoreCustomer[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [totalCount, setTotalCount] = useState(0);
+  const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newPhone, setNewPhone] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
   const pageRef = useRef(0);
   const hasMoreRef = useRef(false);
 
@@ -67,6 +78,89 @@ export const CustomerListScreen: React.FC<Props> = ({ storeId, onBack, onSelectC
       fetchPage(pageRef.current + 1);
     }
   };
+
+  const resetCreateForm = () => {
+    setNewPhone('');
+    setNewName('');
+    setNewEmail('');
+    setShowCreate(false);
+  };
+
+  const handleCreateCustomer = async () => {
+    const phoneNumber = newPhone.trim();
+    if (!phoneNumber) {
+      compatAlert('Lỗi', 'Vui lòng nhập số điện thoại');
+      return;
+    }
+    try {
+      setCreating(true);
+      await storeService.createStaffCustomer({
+        phoneNumber,
+        fullName: newName.trim() || undefined,
+        email: newEmail.trim() || undefined,
+      });
+      compatAlert(
+        'Thành công',
+        'Đã tạo khách. Khách chưa đăng nhập được cho đến khi đặt mật khẩu trên app bằng số điện thoại này.'
+      );
+      resetCreateForm();
+      fetchPage(0, true);
+    } catch (e: any) {
+      compatAlert('Lỗi', e?.message || 'Không thể tạo khách hàng');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const createPanel = showCreate ? (
+    <View style={styles.createCard}>
+      <Text style={styles.createTitle}>Tạo khách (chưa có mật khẩu)</Text>
+      <TextInput
+        style={styles.createInput}
+        placeholder="Số điện thoại *"
+        placeholderTextColor="#9CA3AF"
+        keyboardType="phone-pad"
+        value={newPhone}
+        onChangeText={setNewPhone}
+        editable={!creating}
+      />
+      <TextInput
+        style={styles.createInput}
+        placeholder="Họ và tên"
+        placeholderTextColor="#9CA3AF"
+        value={newName}
+        onChangeText={setNewName}
+        editable={!creating}
+      />
+      <TextInput
+        style={styles.createInput}
+        placeholder="Email (không bắt buộc)"
+        placeholderTextColor="#9CA3AF"
+        keyboardType="email-address"
+        autoCapitalize="none"
+        value={newEmail}
+        onChangeText={setNewEmail}
+        editable={!creating}
+      />
+      <View style={styles.createActions}>
+        <TouchableOpacity onPress={resetCreateForm} disabled={creating} style={styles.createCancel}>
+          <Text style={styles.createCancelText}>Hủy</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={handleCreateCustomer} disabled={creating} style={styles.createSubmit}>
+          {creating ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.createSubmitText}>Tạo</Text>
+          )}
+        </TouchableOpacity>
+      </View>
+    </View>
+  ) : (
+    <TouchableOpacity style={styles.createToggle} onPress={() => setShowCreate(true)} activeOpacity={0.8}>
+      <FontAwesome5 name="user-plus" size={12} color="#2563EB" />
+      <Text style={styles.createToggleText}>Tạo khách</Text>
+    </TouchableOpacity>
+  );
 
   const filteredItems = searchQuery.trim()
     ? items.filter(
@@ -131,13 +225,76 @@ export const CustomerListScreen: React.FC<Props> = ({ storeId, onBack, onSelectC
     </TouchableOpacity>
   );
 
+  const listBody = (
+    <>
+      {createPanel}
+      {loading ? (
+        <ActivityIndicator size="large" color="#2563EB" style={{ marginTop: 48 }} />
+      ) : (
+        <FlatList
+          data={filteredItems}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={styles.list}
+          showsVerticalScrollIndicator={false}
+          onEndReached={handleLoadMore}
+          onEndReachedThreshold={0.3}
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator size="small" color="#2563EB" style={{ paddingVertical: 16 }} />
+            ) : null
+          }
+          ListEmptyComponent={
+            <View style={styles.empty}>
+              <FontAwesome5 name="users" size={36} color="#D1D5DB" />
+              <Text style={styles.emptyText}>Không có khách hàng</Text>
+            </View>
+          }
+        />
+      )}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <View style={styles.embeddedContainer}>
+        <View style={styles.embeddedSearchBar}>
+          <FontAwesome5 name="search" size={13} color="#9CA3AF" />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Tìm tên, SĐT, email, mã KH..."
+            placeholderTextColor="#9CA3AF"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            clearButtonMode="while-editing"
+          />
+          {!!searchQuery && (
+            <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <FontAwesome5 name="times-circle" size={14} color="#9CA3AF" />
+            </TouchableOpacity>
+          )}
+        </View>
+        {!loading && (
+          <Text style={styles.embeddedCount}>{totalCount} khách hàng</Text>
+        )}
+        {listBody}
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <LinearGradient colors={['#1e40af', '#1e40af']} style={styles.header}>
         <View style={styles.headerRow}>
-          <TouchableOpacity style={styles.backBtn} onPress={onBack} activeOpacity={0.75}>
-            <FontAwesome5 name="arrow-left" size={16} color="#fff" />
-          </TouchableOpacity>
+          {onBack ? (
+            <TouchableOpacity style={styles.backBtn} onPress={onBack} activeOpacity={0.75}>
+              <FontAwesome5 name="arrow-left" size={16} color="#fff" />
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.backBtn} />
+          )}
           <View style={styles.headerMid}>
             <Text style={styles.headerTitle}>Khách hàng</Text>
             {!loading && (
@@ -167,30 +324,7 @@ export const CustomerListScreen: React.FC<Props> = ({ storeId, onBack, onSelectC
         </View>
       </LinearGradient>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#2563EB" style={{ marginTop: 48 }} />
-      ) : (
-        <FlatList
-          data={filteredItems}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={styles.list}
-          showsVerticalScrollIndicator={false}
-          onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.3}
-          ListFooterComponent={
-            loadingMore ? (
-              <ActivityIndicator size="small" color="#2563EB" style={{ paddingVertical: 16 }} />
-            ) : null
-          }
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <FontAwesome5 name="users" size={36} color="#D1D5DB" />
-              <Text style={styles.emptyText}>Không có khách hàng</Text>
-            </View>
-          }
-        />
-      )}
+      {listBody}
     </View>
   );
 };
@@ -327,5 +461,95 @@ const styles = StyleSheet.create({
   emptyText: {
     color: '#9CA3AF',
     fontSize: 14,
+  },
+  embeddedContainer: {
+    flex: 1,
+    backgroundColor: '#F9FAFB',
+  },
+  embeddedSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    marginHorizontal: 16,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  embeddedCount: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  createToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    alignSelf: 'flex-start',
+    marginHorizontal: 16,
+    marginTop: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: '#EFF6FF',
+  },
+  createToggleText: {
+    color: '#2563EB',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  createCard: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 8,
+  },
+  createTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  createInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#111827',
+  },
+  createActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  createCancel: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  createCancelText: {
+    color: '#6B7280',
+    fontWeight: '600',
+  },
+  createSubmit: {
+    backgroundColor: '#2563EB',
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  createSubmitText: {
+    color: '#fff',
+    fontWeight: '700',
   },
 });

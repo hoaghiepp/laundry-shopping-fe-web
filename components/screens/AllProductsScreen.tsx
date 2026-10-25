@@ -6,9 +6,11 @@ import {
   ProductsHeader,
   SortOption,
 } from "@/components/products";
+import { CatalogProductSlots } from "@/components/products/CatalogProductSlots";
 import { ProductStatus } from "@/constants/enum";
 import { ProductItem } from "@/models/model";
 import { productService } from "@/services/api";
+import { expandVariantGroups, variantGroupOf } from "@/utils/variantGroup";
 import React, { useCallback, useEffect, useState } from "react";
 import { Alert, RefreshControl, ScrollView, StyleSheet, View } from "react-native";
 
@@ -38,7 +40,7 @@ export const AllProductsScreen: React.FC<AllProductsScreenProps> = ({
       const response = await productService.searchProducts(0, 100, undefined, {
         status: ProductStatus.ACTIVE,
       });
-      const fetchedProducts: ProductItem[] = response?.data || [];
+      const fetchedProducts: ProductItem[] = await expandVariantGroups(response?.data || []);
       setProducts(fetchedProducts);
       setFilteredProducts(fetchedProducts);
     } catch (error: any) {
@@ -69,7 +71,8 @@ export const AllProductsScreen: React.FC<AllProductsScreenProps> = ({
         (product) =>
           product.name.toLowerCase().includes(query) ||
           product.sku?.toLowerCase().includes(query) ||
-          product.description?.toLowerCase().includes(query)
+          product.description?.toLowerCase().includes(query) ||
+          (variantGroupOf(product) || "").toLowerCase().includes(query)
       );
     }
 
@@ -147,14 +150,17 @@ export const AllProductsScreen: React.FC<AllProductsScreenProps> = ({
           />
         ) : (
           <View style={styles.grid}>
-            {filteredProducts.map((product) => (
-              <ProductGridCard
-                key={product.id}
-                product={product}
-                onPress={onProductPress}
-                onAddToCart={onAddToCart}
-              />
-            ))}
+            <CatalogProductSlots
+              products={filteredProducts}
+              onSelectVariant={(product) => onAddToCart(product.id)}
+              renderSingle={(product) => (
+                <ProductGridCard
+                  product={product}
+                  onPress={onProductPress}
+                  onAddToCart={onAddToCart}
+                />
+              )}
+            />
           </View>
         )}
       </ScrollView>

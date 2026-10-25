@@ -18,6 +18,7 @@ export interface AddProductRequest {
   thumbnail_url: string;
   gallery_urls: string[];
   priority: number;
+  variant_group?: string | null;
 }
 
 export interface AddProductBulkRequest {
@@ -38,6 +39,8 @@ export interface UpdateProductRequest {
   gallery_urls?: string[];
   priority?: number;
   status?: ProductStatus;
+  /** Omit to leave unchanged. Null or "" removes the product from its group. */
+  variant_group?: string | null;
 }
 
 export interface SearchProductRequest {
@@ -45,6 +48,34 @@ export interface SearchProductRequest {
   store_id?: string;
   status?: ProductStatus;
   type?: ProductType;
+  /** Exact match after trim. */
+  variant_group?: string;
+}
+
+function trimVariantGroupForCreate(data: AddProductRequest): AddProductRequest {
+  if (typeof data.variant_group !== "string") return data;
+  const trimmed = data.variant_group.trim();
+  if (!trimmed) {
+    const { variant_group: _variantGroup, ...rest } = data;
+    return rest;
+  }
+  return { ...data, variant_group: trimmed };
+}
+
+function trimVariantGroupForUpdate(data: UpdateProductRequest): UpdateProductRequest {
+  if (typeof data.variant_group !== "string") return data;
+  const trimmed = data.variant_group.trim();
+  return { ...data, variant_group: trimmed || null };
+}
+
+function trimVariantGroupForSearch(data?: SearchProductRequest): SearchProductRequest | undefined {
+  if (!data || typeof data.variant_group !== "string") return data;
+  const trimmed = data.variant_group.trim();
+  if (!trimmed) {
+    const { variant_group: _variantGroup, ...rest } = data;
+    return rest;
+  }
+  return { ...data, variant_group: trimmed };
 }
 
 export const productService = {
@@ -56,7 +87,7 @@ export const productService = {
       }
       const response = await userAxios.post(
         `${API_BASE_URL}/v1/admin/products/bulk`,
-        data,
+        { products: data.products.map(trimVariantGroupForCreate) },
         {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -78,7 +109,7 @@ export const productService = {
       }
       const response = await userAxios.post(
         `${API_BASE_URL}/v1/admin/products`,
-        data,
+        trimVariantGroupForCreate(data),
         {
           headers: {
             "Content-Type": "application/json",
@@ -101,7 +132,7 @@ export const productService = {
     try {
       const response = await userAxios.post(
         `${API_BASE_URL}/v1/public/products/search`,
-        data,
+        trimVariantGroupForSearch(data),
         {
           headers: {
             "Content-Type": "application/json",
@@ -147,7 +178,7 @@ export const productService = {
       }
       const response = await userAxios.patch(
         `${API_BASE_URL}/v1/admin/products/${id}`,
-        data,
+        trimVariantGroupForUpdate(data),
         {
           headers: {
             "Content-Type": "application/merge-patch+json",

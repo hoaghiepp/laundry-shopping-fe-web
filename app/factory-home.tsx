@@ -1,4 +1,5 @@
 import { ChangePasswordScreen } from '@/components/auth';
+import { useOrderStream } from '@/hooks/useOrderStream';
 import { FactoryBottomNav, FactoryHeader, FactorySelectorModal } from '@/components/factory';
 import {
   FactoryDashboardScreen,
@@ -17,13 +18,14 @@ import { getLastSelectedFactoryId, saveLastSelectedFactoryId } from '@/lib/store
 import { fcmService } from '@/services/api/fcmService';
 import { GarmentScanDialog, garmentNameFromOrder } from '@/components/staff/GarmentScanDialog';
 import { logisticService } from '@/services/api/logisticService';
+import { applyOrderStreamPatch } from '@/services/api/orderStream';
 import { Order, orderService } from '@/services/api/orderService';
 import { StoreListItem, storeService } from '@/services/api/storeService';
 import { clearGlobalUserRole, getGlobalUserRole, isAdmin, isSuperAdmin } from '@/utils/globalState';
 import { resetOrientationToPortrait } from '@/utils/orientation';
 import { router } from 'expo-router';
 import * as SecureStore from "@/lib/secureStorage";
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 
 type OverlayScreen =
@@ -223,6 +225,36 @@ export default function FactoryHome() {
       setRefreshingOrders(false);
     }
   }, [selectedFactory?.id, fetchOrders]);
+
+  const ordersRef = useRef(orders);
+  ordersRef.current = orders;
+
+  useOrderStream({
+    storeId: selectedFactory?.id ?? null,
+    onReady: () => {
+      if (selectedFactory?.id && ordersRef.current.length === 0) {
+        void fetchOrders(0, true);
+      }
+    },
+    onOrderUpdated: (event) => {
+      const factoryId = selectedFactory?.id;
+      if (!factoryId) return;
+      if (event.hub_id !== factoryId && event.factory_id !== factoryId) return;
+      const existing = ordersRef.current.find((order) => order.id === event.order_id);
+      if (!existing) {
+        void fetchOrders(0, true);
+        return;
+      }
+      const patched = applyOrderStreamPatch(existing, event);
+      if (patched.hub_id !== factoryId && patched.factory_id !== factoryId) {
+        setOrders((prev) => prev.filter((order) => order.id !== event.order_id));
+        return;
+      }
+      setOrders((prev) =>
+        prev.map((order) => (order.id === patched.id ? patched : order))
+      );
+    },
+  });
 
   const handleFactorySelect = () => {
     setShowFactorySelector(true);

@@ -90,6 +90,18 @@ export const staffOrderService = {
     }
   },
 
+  pay: async (orderId: string): Promise<any> => {
+    try {
+      const res = await customerOrderAxios.post(
+        `${API_BASE_URL}/v1/customer/orders/${orderId}/pay`,
+        {}
+      );
+      return res.data;
+    } catch (error) {
+      throw new Error(extractApiErrorMessage(error, "Submit payment failed"));
+    }
+  },
+
   confirmCustomerOrderNoPayment: async (orderId: string): Promise<any> => {
     try {
       const res = await customerOrderAxios.put(`${API_BASE_URL}/v1/customer/orders/${orderId}/confirm-surcharge-no-payment`);

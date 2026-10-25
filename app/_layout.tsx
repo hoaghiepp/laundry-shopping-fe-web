@@ -10,6 +10,7 @@ import "react-native-reanimated";
 import { WebAlertHost } from "@/components/WebAlertHost";
 import { LoadingProvider } from "@/context/LoadingContext";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import { prefetchGoshipLocations } from "@/lib/goshipLocations";
 import { ensureSessionFromStoredTokens } from "@/lib/sessionHydrate";
 import { setOrientationByCurrentRole } from "@/utils/orientation";
@@ -19,6 +20,7 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  useOrderStream({ session: true });
 
   useEffect(() => {
     let cancelled = false;

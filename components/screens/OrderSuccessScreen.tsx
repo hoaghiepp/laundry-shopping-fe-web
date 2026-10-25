@@ -14,6 +14,8 @@ const getPaymentStatusLabel = (status: string | undefined): string => {
   switch (status) {
     case 'PAID':
       return 'Đã thanh toán';
+    case 'WAITING_CONFIRM':
+      return 'Chờ cửa hàng xác nhận tiền';
     case 'PARTIAL_PAID':
       return 'Thanh toán một phần';
     case 'UNPAID':
@@ -51,7 +53,11 @@ export const OrderSuccessScreen: React.FC<OrderSuccessScreenProps> = ({
         </View>
         <Text style={styles.title}>Đặt hàng thành công!</Text>
         <Text style={styles.subtitle}>
-          Cảm ơn bạn đã sử dụng dịch vụ. Shipper sẽ liên hệ với bạn trong thời gian sớm nhất.
+          {order.payment_status === 'WAITING_CONFIRM'
+            ? 'Đơn đã gửi. Cửa hàng sẽ xác nhận sau khi nhận tiền mặt.'
+            : order.payment_status === 'UNPAID'
+              ? 'Đơn dịch vụ đã tạo. Mở chi tiết đơn và gửi thanh toán khi bạn muốn trả tiền.'
+              : 'Cảm ơn bạn đã sử dụng dịch vụ. Shipper sẽ liên hệ với bạn trong thời gian sớm nhất.'}
         </Text>
 
         <View style={styles.detailsCard}>

@@ -34,6 +34,14 @@ export interface OrderCardData {
     bgColor: string;
     icon?: string;
   };
+  sameDayBadge?: {
+    text: string;
+    color: string;
+    bgColor: string;
+    icon?: string;
+  };
+  /** Formatted same-day surcharge (shown when fee > 0) */
+  sameDayServiceFee?: string;
   paymentStatusBadge?: {
     text: string;
     color: string;
@@ -221,6 +229,16 @@ export const OrderCardStore: React.FC<OrderCardStoreProps> = ({
               </Text>
             </View>
           )}
+          {order.sameDayBadge && (
+            <View style={[styles.badge, { backgroundColor: order.sameDayBadge.bgColor }]}>
+              {order.sameDayBadge.icon && (
+                <FontAwesome5 name={order.sameDayBadge.icon} size={8} color={order.sameDayBadge.color} style={{ marginRight: 4 }} />
+              )}
+              <Text style={[styles.badgeText, { color: order.sameDayBadge.color }]}>
+                {order.sameDayBadge.text}
+              </Text>
+            </View>
+          )}
           {order.paymentStatusBadge && (
             <View style={[styles.badge, { backgroundColor: order.paymentStatusBadge.bgColor }]}>
               <Text style={[styles.badgeText, { color: order.paymentStatusBadge.color }]}>
@@ -318,6 +336,13 @@ export const OrderCardStore: React.FC<OrderCardStoreProps> = ({
               </Text>
             </View>
           )}
+        </View>
+      )}
+
+      {order.sameDayServiceFee && (
+        <View style={styles.totalPriceRow}>
+          <Text style={styles.sameDayFeeLabel}>Phí trong ngày</Text>
+          <Text style={styles.sameDayFeeValue}>{order.sameDayServiceFee}</Text>
         </View>
       )}
 
@@ -566,6 +591,15 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: 'bold',
     color: '#111827',
+  },
+  sameDayFeeLabel: {
+    fontSize: 12,
+    color: '#B45309',
+  },
+  sameDayFeeValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#B45309',
   },
   footer: {
     flexDirection: 'row',

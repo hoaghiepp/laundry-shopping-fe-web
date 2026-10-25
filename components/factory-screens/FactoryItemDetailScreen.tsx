@@ -8,6 +8,7 @@ import {
 } from "@/constants/enum";
 import { factoryService } from "@/services/api/factoryService";
 import { logisticService } from "@/services/api/logisticService";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import { Order, orderService } from "@/services/api/orderService";
 import { storeService } from "@/services/api/storeService";
 import { FontAwesome5 } from "@expo/vector-icons";
@@ -403,9 +404,9 @@ export const FactoryItemDetailScreen: React.FC<
     fetchOrderDetails();
   }, [itemId, orderId]);
 
-  const fetchOrderDetails = async () => {
+  const fetchOrderDetails = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
 
       let actualOrderId = orderId;
       let foundTrackingItem = null;
@@ -448,7 +449,7 @@ export const FactoryItemDetailScreen: React.FC<
       }
 
       if (!actualOrderId) {
-        Alert.alert("Lỗi", "Không tìm thấy thông tin đơn hàng");
+        if (!silent) Alert.alert("Lỗi", "Không tìm thấy thông tin đơn hàng");
         return;
       }
 
@@ -486,16 +487,32 @@ export const FactoryItemDetailScreen: React.FC<
             console.error("Failed to fetch store name:", error);
           }
         }
-      } else {
+      } else if (!silent) {
         Alert.alert("Lỗi", "Không tìm thấy đơn hàng");
       }
     } catch (error) {
       console.error("Failed to fetch order details:", error);
-      Alert.alert("Lỗi", "Không thể tải thông tin đơn hàng");
+      if (!silent) Alert.alert("Lỗi", "Không thể tải thông tin đơn hàng");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
+
+  useOrderStream({
+    onReady: () => {
+      void fetchOrderDetails(true);
+    },
+    onOrderUpdated: (event) => {
+      const currentId = order?.id || orderId;
+      if (
+        !currentId ||
+        (event.order_id !== currentId && event.order_code !== order?.code)
+      ) {
+        return;
+      }
+      void fetchOrderDetails(true);
+    },
+  });
 
   const getStatusColor = (status: ServiceOrderItemStatus) => {
     switch (status) {

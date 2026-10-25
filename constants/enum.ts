@@ -33,6 +33,7 @@ export enum OrderStatus {
 
 export enum PaymentStatus {
   UNPAID = "UNPAID",
+  WAITING_CONFIRM = "WAITING_CONFIRM",
   PARTIAL_PAID = "PARTIAL_PAID",
   PAID = "PAID",
   REFUNDED = "REFUNDED",
@@ -50,7 +51,9 @@ export enum StoreTabType {
   ORDERS = "orders",
   INVENTORY = "inventory",
   LOGISTICS = "logistics",
+  ITEM_SEARCH = "item-search",
   REPORT = "report",
+  CUSTOMERS = "customers",
   PROFILE = "profile",
 }
 
@@ -124,7 +127,23 @@ export enum LogisticTripItemType {
 export enum LogisticTripStatus {
   CREATED = "CREATED",
   IN_TRANSIT = "IN_TRANSIT",
+  ARRIVED = "ARRIVED",
   COMPLETED = "COMPLETED",
+  CANCELLED = "CANCELLED",
+}
+
+export enum ItemCondition {
+  NORMAL = "NORMAL",
+  DAMAGED = "DAMAGED",
+  MISSING = "MISSING",
+}
+
+export enum LogisticTripItemStatus {
+  SEALED = "SEALED",
+  RECEIVED = "RECEIVED",
+  UNPACKED = "UNPACKED",
+  MISSING = "MISSING",
+  REMOVED = "REMOVED",
 }
 
 export enum IncidentType {

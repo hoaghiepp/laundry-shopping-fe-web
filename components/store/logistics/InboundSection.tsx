@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { LogisticsSummaryCard } from './LogisticsSummaryCard';
-import { formatDate, getStatusDisplay } from './logisticsUtils';
+import { formatDate, getStatusDisplay, tripTypeLabel } from './logisticsUtils';
 import { Trip } from './OutboundSection';
 import { TripHistoryCard } from './TripHistoryCard';
 
@@ -64,7 +64,7 @@ export const InboundSection: React.FC<InboundSectionProps> = ({
               key={trip.id}
               tripCode={trip.trip_code}
               date={formatDate(trip.created_date)}
-              location={`Từ ${sourceName}`}
+              location={`${tripTypeLabel(trip.trip_type) || 'Chuyến'} · Từ ${sourceName}`}
               statusDisplay={statusDisplay}
               onPress={() => onTripPress(trip.id)}
             />

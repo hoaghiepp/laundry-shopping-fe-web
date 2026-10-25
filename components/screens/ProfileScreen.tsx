@@ -277,7 +277,6 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
       setSaving(true);
       const updateData: UpdateCustomerProfileRequest = {
         full_name: fullName.trim(),
-        phone_number: phoneNumber.trim(),
       };
 
       await customerService.updateCustomerProfile(updateData);
@@ -389,13 +388,13 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({
               <View style={styles.formField}>
                 <Text style={styles.label}>Số điện thoại</Text>
                 <TextInput
-                  style={styles.input}
+                  style={[styles.input, styles.inputReadonly]}
                   value={phoneNumber}
-                  onChangeText={setPhoneNumber}
-                  placeholder="Nhập số điện thoại"
+                  placeholder="Số điện thoại"
                   keyboardType="phone-pad"
-                  editable={!saving}
+                  editable={false}
                 />
+                <Text style={styles.fieldHint}>Số điện thoại dùng để đăng nhập và không đổi được.</Text>
               </View>
               <View style={styles.formField}>
                 <Text style={styles.label}>Email</Text>
@@ -601,6 +600,14 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
     paddingVertical: 8,
+  },
+  inputReadonly: {
+    color: '#6B7280',
+  },
+  fieldHint: {
+    marginTop: 4,
+    fontSize: 11,
+    color: '#9CA3AF',
   },
   addressSection: {
     marginTop: 24,

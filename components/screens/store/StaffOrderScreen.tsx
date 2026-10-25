@@ -1,8 +1,11 @@
 import { ServiceSubItemsEditor } from "@/components/laundry/ServiceSubItemsEditor";
-import { ProductType } from "@/constants/enum";
+import { VariantGroupBox } from "@/components/products/VariantGroupBox";
+import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
+import { PaymentStatus, ProductType } from "@/constants/enum";
 import { compatAlert } from "@/lib/compatAlert";
 import { ProductItem } from "@/models/model";
 import { ensureCustomerOrderTokensFromStorage } from "@/lib/customerOrderSession";
+import { orderService } from "@/services/api/orderService";
 import { staffOrderService } from "@/services/api/staffOrderService";
 import { StoreAddress, storeService } from "@/services/api/storeService";
 import { StaffOrderCartDialog } from "@/components/screens/store/StaffOrderCartDialog";
@@ -20,6 +23,13 @@ import {
   validateNote,
   validateServiceSubItems,
 } from "@/utils/serviceLines";
+import {
+  CatalogEntry,
+  expandVariantGroups,
+  groupCatalogProducts,
+  mergeProductsById,
+  variantGroupOf,
+} from "@/utils/variantGroup";
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -33,6 +43,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -100,6 +111,7 @@ const ProductRow = React.memo(({
 
     <View style={pRow.info}>
       <Text style={pRow.name} numberOfLines={2}>{product.name}</Text>
+      <VariantGroupLabel value={variantGroupOf(product)} style={pRow.unit} />
       <Text style={pRow.price}>{formatCurrencyVND(product.price)}</Text>
       {product.unit ? <Text style={pRow.unit}>/ {product.unit}</Text> : null}
     </View>
@@ -146,6 +158,7 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
   const [showCart, setShowCart] = useState(false);
   const [showCheckout, setShowCheckout] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [sameDayService, setSameDayService] = useState(false);
   const [form, setForm] = useState<CheckoutForm>({ fullName: "", phone: "", note: "" });
   const [subItemProduct, setSubItemProduct] = useState<ProductItem | null>(null);
   const [subItemDrafts, setSubItemDrafts] = useState<SubItemDraft[]>([]);
@@ -238,9 +251,10 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
     if (reset) setLoading(true); else setLoadingMore(true);
     try {
       const res = await staffOrderService.searchProducts(storeId, tab, pageNum, PAGE_SIZE);
-      const items: ProductItem[] = res?.data ?? [];
-      setProducts((prev) => reset ? items : [...prev, ...items]);
-      setHasMore(items.length === PAGE_SIZE);
+      const pageItems: ProductItem[] = res?.data ?? [];
+      const items = await expandVariantGroups(pageItems, { type: tab });
+      setProducts((prev) => (reset ? items : mergeProductsById(prev, items)));
+      setHasMore(pageItems.length === PAGE_SIZE);
       setPage(pageNum);
     } catch (e: any) {
       compatAlert("Lỗi", e.message || "Không thể tải sản phẩm");
@@ -264,9 +278,14 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
   const filtered = useMemo(() => {
     const q = searchText.trim().toLowerCase();
     if (!q) return products;
-    return products.filter(
-      (p) => p.name.toLowerCase().includes(q) || (p.sku && p.sku.toLowerCase().includes(q))
-    );
+    return products.filter((p) => {
+      const group = variantGroupOf(p);
+      return (
+        p.name.toLowerCase().includes(q) ||
+        (p.sku && p.sku.toLowerCase().includes(q)) ||
+        (group != null && group.toLowerCase().includes(q))
+      );
+    });
   }, [products, searchText]);
 
   const cartMap = useMemo(() => {
@@ -282,6 +301,8 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
     const hasChildren = cart.some((line) => line.parentId && line.parentId === entry.cartItemId);
     return sum + chargedLineAmount(entry.product.price, entry.quantity, hasChildren);
   }, 0);
+  const sameDayServiceFee = sameDayService ? Math.round(totalPrice * 0.5) : 0;
+  const previewTotal = totalPrice + sameDayServiceFee;
 
   const setLoadingFor = (id: string, v: boolean) =>
     setItemLoading((prev) => ({ ...prev, [id]: v }));
@@ -442,30 +463,55 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
         shipping_ward_id: storeAddress?.ward_id ?? 0,
         is_need_shipment: false,
         is_split_shipment: false,
+        same_day_service: sameDayService,
         note: form.note.trim() || "Nhận tại cửa hàng",
       });
 
-      const orderId = response?.data?.id as string | undefined;
-      let confirmWarned = false;
-      if (orderId) {
+      const created = response?.data;
+      const orderId = created?.id as string | undefined;
+      let paymentStatus = created?.payment_status as string | undefined;
+
+      if (orderId && paymentStatus === PaymentStatus.UNPAID) {
         try {
-          const res = await staffOrderService.confirmCustomerOrderNoPayment(orderId);
-          console.log("confirmCustomerOrderNoPayment res", res);
-        } catch (confirmErr: any) {
-          confirmWarned = true;
+          const payRes = await staffOrderService.pay(orderId);
+          paymentStatus = payRes?.data?.payment_status ?? PaymentStatus.WAITING_CONFIRM;
+        } catch (payErr: any) {
           compatAlert(
             "Cảnh báo",
-            confirmErr?.message ||
-              "Đơn hàng đã tạo nhưng không thể xác nhận thanh toán không phụ phí. Vui lòng xử lý đơn trên hệ thống."
+            payErr?.message || "Đơn đã tạo nhưng chưa gửi được thanh toán."
           );
         }
       }
 
       await syncCart();
       setForm({ fullName: "", phone: "", note: "" });
+      setSameDayService(false);
       setShowCheckout(false);
       setShowCart(false);
-      if (!confirmWarned) {
+
+      if (orderId && paymentStatus === PaymentStatus.WAITING_CONFIRM) {
+        compatAlert(
+          "Đơn đã tạo",
+          "Hóa đơn đang chờ xác nhận tiền mặt. Xác nhận đã nhận tiền?",
+          [
+            { text: "Để sau", style: "cancel" },
+            {
+              text: "Đã nhận tiền",
+              onPress: async () => {
+                try {
+                  await orderService.confirmPayment(orderId);
+                  compatAlert("Thành công", "Đã xác nhận đã nhận tiền.");
+                } catch (confirmErr: any) {
+                  compatAlert(
+                    "Lỗi",
+                    confirmErr?.message || "Không thể xác nhận thanh toán"
+                  );
+                }
+              },
+            },
+          ]
+        );
+      } else if (paymentStatus !== PaymentStatus.UNPAID) {
         compatAlert("Thành công", "Đã tạo đơn hàng thành công!");
       }
     } catch (e: any) {
@@ -475,15 +521,53 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
     }
   };
 
-  const renderProduct = ({ item }: { item: ProductItem }) => (
-    <ProductRow
-      product={item}
-      cartQty={cartMap[item.id]?.quantity ?? 0}
-      loading={!!itemLoading[item.id]}
-      onAdd={() => handleAdd(item)}
-      onRemove={() => handleDecrease(item)}
-    />
-  );
+  const catalog = useMemo(() => groupCatalogProducts(filtered), [filtered]);
+
+  const renderEntry = ({ item }: { item: CatalogEntry }) => {
+    if (item.kind === "single") {
+      return (
+        <ProductRow
+          product={item.product}
+          cartQty={cartMap[item.product.id]?.quantity ?? 0}
+          loading={!!itemLoading[item.product.id]}
+          onAdd={() => handleAdd(item.product)}
+          onRemove={() => handleDecrease(item.product)}
+        />
+      );
+    }
+    return (
+      <View style={styles.variantBox}>
+        <VariantGroupBox
+          title={item.title}
+          products={item.products}
+          onSelect={handleAdd}
+          optionTrailing={(product) => {
+            const cartQty = cartMap[product.id]?.quantity ?? 0;
+            const rowLoading = !!itemLoading[product.id];
+            if (rowLoading) return <ActivityIndicator size="small" color="#2563EB" />;
+            if (cartQty === 0) {
+              return (
+                <TouchableOpacity style={pRow.addBtn} onPress={() => handleAdd(product)} activeOpacity={0.8}>
+                  <FontAwesome5 name="plus" size={13} color="#fff" />
+                </TouchableOpacity>
+              );
+            }
+            return (
+              <View style={pRow.qtyGroup}>
+                <TouchableOpacity style={pRow.qtyBtn} onPress={() => handleDecrease(product)} activeOpacity={0.8}>
+                  <FontAwesome5 name="minus" size={11} color="#2563EB" />
+                </TouchableOpacity>
+                <Text style={pRow.qtyNum}>{cartQty}</Text>
+                <TouchableOpacity style={pRow.qtyBtn} onPress={() => handleAdd(product)} activeOpacity={0.8}>
+                  <FontAwesome5 name="plus" size={11} color="#2563EB" />
+                </TouchableOpacity>
+              </View>
+            );
+          }}
+        />
+      </View>
+    );
+  };
 
   const renderFooter = () => {
     if (!loadingMore) return null;
@@ -568,9 +652,9 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
         </View>
       ) : (
         <FlatList
-          data={filtered}
-          keyExtractor={(item) => item.id}
-          renderItem={renderProduct}
+          data={catalog}
+          keyExtractor={(item) => (item.kind === "group" ? item.key : item.product.id)}
+          renderItem={renderEntry}
           ItemSeparatorComponent={() => <View style={styles.separator} />}
           contentContainerStyle={[styles.listContent, totalItems > 0 && { paddingBottom: 76 }]}
           showsVerticalScrollIndicator={false}
@@ -706,6 +790,20 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
                       numberOfLines={3}
                     />
                   </View>
+                  <View style={co.switchField}>
+                    <View style={co.switchInfo}>
+                      <Text style={co.label}>Dịch vụ trong ngày</Text>
+                      <Text style={co.switchHint}>
+                        Phụ thu 50% trên tạm tính (ước tính phía client)
+                      </Text>
+                    </View>
+                    <Switch
+                      value={sameDayService}
+                      onValueChange={setSameDayService}
+                      trackColor={{ false: "#D1D5DB", true: "#93C5FD" }}
+                      thumbColor={sameDayService ? "#2563EB" : "#F3F4F6"}
+                    />
+                  </View>
                   <View style={co.summary}>
                     <Text style={co.summaryTitle}>Tóm tắt đơn hàng</Text>
                     {cart.map((e) => (
@@ -718,8 +816,18 @@ export const StaffOrderScreen: React.FC<StaffOrderScreenProps> = ({
                     ))}
                     <View style={co.divider} />
                     <View style={co.row}>
+                      <Text style={co.rowName}>Tạm tính</Text>
+                      <Text style={co.rowAmt}>{formatCurrencyVND(totalPrice)}</Text>
+                    </View>
+                    {sameDayService ? (
+                      <View style={co.row}>
+                        <Text style={co.rowName}>Phí trong ngày (+50%)</Text>
+                        <Text style={co.rowAmt}>{formatCurrencyVND(sameDayServiceFee)}</Text>
+                      </View>
+                    ) : null}
+                    <View style={co.row}>
                       <Text style={co.totalLabel}>Tổng cộng</Text>
-                      <Text style={co.totalAmt}>{formatCurrencyVND(totalPrice)}</Text>
+                      <Text style={co.totalAmt}>{formatCurrencyVND(previewTotal)}</Text>
                     </View>
                   </View>
                 </ScrollView>
@@ -836,6 +944,7 @@ const styles = StyleSheet.create({
   hint: { color: "#9CA3AF", fontSize: 14 },
   separator: { height: 1, backgroundColor: "#F3F4F6", marginLeft: 96 },
   listContent: { paddingVertical: 4 },
+  variantBox: { paddingHorizontal: 12, paddingVertical: 6 },
 
   loadMoreRow: {
     flexDirection: "row",
@@ -996,6 +1105,16 @@ const sheet = StyleSheet.create({
 
 const co = StyleSheet.create({
   field: { marginBottom: 12, paddingHorizontal: 16 },
+  switchField: {
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  switchInfo: { flex: 1, minWidth: 0 },
+  switchHint: { fontSize: 12, color: "#6B7280", marginTop: 2 },
   label: { fontSize: 13, fontWeight: "600", color: "#374151", marginBottom: 5 },
   input: {
     borderWidth: 1,

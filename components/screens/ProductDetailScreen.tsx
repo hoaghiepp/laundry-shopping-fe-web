@@ -1,4 +1,5 @@
 import { ServiceSubItemsEditor } from "@/components/laundry/ServiceSubItemsEditor";
+import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
 import { ProductItem } from "@/models/model";
 import { formatCurrencyVND } from "@/utils/format";
 import {
@@ -9,6 +10,7 @@ import {
   validateNote,
   validateServiceSubItems,
 } from "@/utils/serviceLines";
+import { variantGroupOf } from "@/utils/variantGroup";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import React, { useEffect, useState } from "react";
@@ -241,6 +243,7 @@ export const ProductDetailScreen: React.FC<ProductDetailScreenProps> = ({
                 <Text style={styles.metaText}>SKU: {product.sku}</Text>
               </View>
             )}
+            <VariantGroupLabel value={variantGroupOf(product)} style={styles.metaText} />
             <View
               style={[
                 styles.statusBadge,

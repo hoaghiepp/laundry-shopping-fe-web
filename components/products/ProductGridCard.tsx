@@ -1,4 +1,6 @@
+import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
 import { ProductItem } from "@/models/model";
+import { variantGroupOf } from "@/utils/variantGroup";
 import { formatCurrencyVND } from "@/utils/format";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
@@ -43,6 +45,7 @@ export const ProductGridCard: React.FC<ProductGridCardProps> = ({
         <Text style={styles.productName} numberOfLines={2}>
           {product.name}
         </Text>
+        <VariantGroupLabel value={variantGroupOf(product)} style={styles.productSku} />
         {product.sku && (
           <Text style={styles.productSku}>SKU: {product.sku}</Text>
         )}

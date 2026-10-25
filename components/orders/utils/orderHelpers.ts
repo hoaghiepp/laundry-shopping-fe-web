@@ -274,6 +274,18 @@ export const mapOrderToCardData = (
         items: mapOrderItemsToCardItems(order.order_items || [], filterGoodsOnly),
         note: order.note || "Cần xác nhận từ khách hàng",
         totalPrice: formatCurrencyVND(order.final_total ?? 0),
+        sameDayBadge: order.same_day_service
+          ? {
+              text: "Trong ngày",
+              color: "#9A3412",
+              bgColor: "#FFEDD5",
+              icon: "bolt",
+            }
+          : undefined,
+        sameDayServiceFee:
+          order.same_day_service && (order.same_day_service_fee ?? 0) > 0
+            ? formatCurrencyVND(order.same_day_service_fee ?? 0)
+            : undefined,
         paymentStatusBadge:
           cancelledPaymentBadge ?? getPaymentStatusBadge(order.payment_status),
         createdTime: order.created_date
@@ -302,6 +314,18 @@ export const mapOrderToCardData = (
     items: mapOrderItemsToCardItems(order.order_items || [], filterGoodsOnly),
     note: order.note,
     totalPrice: formatCurrencyVND(order.final_total ?? 0),
+    sameDayBadge: order.same_day_service
+      ? {
+          text: "Trong ngày",
+          color: "#9A3412",
+          bgColor: "#FFEDD5",
+          icon: "bolt",
+        }
+      : undefined,
+    sameDayServiceFee:
+      order.same_day_service && (order.same_day_service_fee ?? 0) > 0
+        ? formatCurrencyVND(order.same_day_service_fee ?? 0)
+        : undefined,
     paymentStatusBadge:
       cancelledPaymentBadge ?? getPaymentStatusBadge(order.payment_status),
     createdTime: order.created_date
@@ -326,6 +350,7 @@ export const mapOrderToCardData = (
   // Add payment status badge for unpaid/partial paid orders
   if (
     order.payment_status === PaymentStatus.UNPAID ||
+    order.payment_status === PaymentStatus.WAITING_CONFIRM ||
     order.payment_status === PaymentStatus.PARTIAL_PAID
   ) {
     const codAmount = calculateCODAmount(order);

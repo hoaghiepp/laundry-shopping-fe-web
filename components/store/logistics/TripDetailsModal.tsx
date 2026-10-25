@@ -1,5 +1,6 @@
 import { LogisticTripStatus, ProductType } from '@/constants/enum';
 import { compatAlert } from '@/lib/compatAlert';
+import { logisticService } from '@/services/api/logisticService';
 import { orderService } from '@/services/api/orderService';
 import { FontAwesome5 } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
@@ -13,7 +14,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { formatDate, getStatusDisplay } from './logisticsUtils';
+import { eventTypeLabel, formatDate, getStatusDisplay, tripTypeLabel } from './logisticsUtils';
 import { TripItemCard } from './TripItemCard';
 
 interface TripDetailsModalProps {
@@ -32,6 +33,9 @@ interface TripDetailsModalProps {
   onScanInbound?: (tripId: string, tripCode: string, sourceStoreId: string) => void;
   onCallVehicle?: (tripId: string, tripCode: string) => void;
   onSelfTransport?: (tripId: string, tripCode: string) => void;
+  onCancel?: (tripId: string) => void;
+  onRemoveItem?: (itemId: string) => void;
+  onOpenPassport?: (barcode: string) => void;
 }
 
 export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
@@ -50,7 +54,14 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
   onScanInbound,
   onCallVehicle,
   onSelfTransport,
+  onCancel,
+  onRemoveItem,
+  onOpenPassport,
 }) => {
+  const [events, setEvents] = useState<any[]>([]);
+  const [eventsOpen, setEventsOpen] = useState(false);
+  const [eventsLoading, setEventsLoading] = useState(false);
+  const [manifestCounts, setManifestCounts] = useState<any>(null);
   const [orderDataMap, setOrderDataMap] = useState<Map<string, any>>(new Map());
   const { height: windowHeight } = useWindowDimensions();
   const bodyMaxHeight = Math.min(windowHeight * 0.55, 520);
@@ -216,18 +227,55 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
 
   const totalServiceQuantity = calculateTotalServiceQuantity();
 
+  useEffect(() => {
+    if (!visible || !tripDetails?.id) {
+      setManifestCounts(null);
+      return;
+    }
+    let cancelled = false;
+    logisticService
+      .getManifest(tripDetails.id)
+      .then((response) => {
+        if (!cancelled) setManifestCounts(response?.data?.counts || null);
+      })
+      .catch(() => {
+        if (!cancelled) setManifestCounts(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, tripDetails?.id]);
+
+  const activeItemCount = (tripDetails?.logistic_trip_items || []).filter(
+    (item: any) => item.status !== 'REMOVED'
+  ).length;
+
   const showOutboundActions =
     tripDetails &&
-    tripDetails.status !== LogisticTripStatus.COMPLETED &&
+    tripDetails.status === LogisticTripStatus.CREATED &&
     (tripDetails.source_store_id === storeId ||
-      tripDetails.source_store_id === factoryId) &&
-    tripDetails.status !== LogisticTripStatus.IN_TRANSIT;
+      tripDetails.source_store_id === factoryId);
 
   const showScanInboundAction =
-    tripDetails &&
-    tripDetails.status !== LogisticTripStatus.COMPLETED &&
-    !showOutboundActions &&
+    !!isInbound &&
+    !!tripDetails &&
+    (tripDetails.status === LogisticTripStatus.IN_TRANSIT ||
+      tripDetails.status === LogisticTripStatus.ARRIVED) &&
     !!onScanInbound;
+
+  const loadEvents = async () => {
+    if (!tripDetails?.id) return;
+    setEventsOpen(true);
+    setEventsLoading(true);
+    try {
+      const response = await logisticService.getTripEvents(tripDetails.id, { page: 0, size: 30 });
+      setEvents(response?.data || []);
+    } catch (error) {
+      console.error('Failed to load trip events:', error);
+    } finally {
+      setEventsLoading(false);
+    }
+  };
 
   const tripItemsByOrder: { orderCode: string; items: any[] }[] = [];
   const tripItemGroups = new Map<string, any[]>();
@@ -337,6 +385,23 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                     )}
                   </View>
                 </View>
+                {tripDetails.trip_type ? (
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Loại:</Text>
+                    <Text style={styles.modalInfoValue}>{tripTypeLabel(tripDetails.trip_type)}</Text>
+                  </View>
+                ) : null}
+                {manifestCounts ? (
+                  <View style={styles.modalInfoRow}>
+                    <Text style={styles.modalInfoLabel}>Manifest:</Text>
+                    <Text style={styles.modalInfoValue}>
+                      {manifestCounts.received}/{manifestCounts.expected} đã nhận
+                      {` · chờ ${manifestCounts.pending ?? 0}`}
+                      {` · thiếu ${manifestCounts.missing ?? 0}`}
+                      {` · hỏng ${manifestCounts.damaged ?? 0}`}
+                    </Text>
+                  </View>
+                ) : null}
                 <View style={styles.modalInfoRow}>
                   <Text style={styles.modalInfoLabel}>Ngày tạo:</Text>
                   <Text style={styles.modalInfoValue}>
@@ -367,20 +432,33 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                           trackingIdToBarcode?.get(item.service_item_tracking_id);
                         const orderData = orderDataMap.get(group.orderCode);
                         return (
-                          <TripItemCard
-                            key={item.id || `${group.orderCode}-${index}`}
-                            item={item}
-                            index={index}
-                            orderCode={group.orderCode}
-                            barcode={barcode}
-                            orderData={orderData}
-                            storeId={storeId || factoryId}
-                            onOrderPress={
-                              group.orderCode !== "Chưa có mã đơn"
-                                ? () => handleOrderPress(group.orderCode)
-                                : undefined
-                            }
-                          />
+                          <View key={item.id || `${group.orderCode}-${index}`}>
+                            <TripItemCard
+                              item={item}
+                              index={index}
+                              orderCode={group.orderCode}
+                              barcode={barcode}
+                              orderData={orderData}
+                              storeId={storeId || factoryId}
+                              onOrderPress={
+                                group.orderCode !== "Chưa có mã đơn"
+                                  ? () => handleOrderPress(group.orderCode)
+                                  : undefined
+                              }
+                            />
+                            <View style={styles.itemActions}>
+                              {barcode && onOpenPassport ? (
+                                <TouchableOpacity onPress={() => onOpenPassport(barcode)}>
+                                  <Text style={styles.itemActionText}>Hộ chiếu</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                              {showOutboundActions && item.status !== 'REMOVED' && item.id && onRemoveItem ? (
+                                <TouchableOpacity onPress={() => onRemoveItem(item.id)}>
+                                  <Text style={styles.itemActionText}>Bỏ khỏi chuyến</Text>
+                                </TouchableOpacity>
+                              ) : null}
+                            </View>
+                          </View>
                         );
                       })}
                     </View>
@@ -388,6 +466,24 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                 ) : (
                   <Text style={styles.modalEmptyText}>Chưa có hàng hóa</Text>
                 )}
+                <TouchableOpacity onPress={loadEvents} style={{ marginTop: 8 }}>
+                  <Text style={styles.itemActionText}>
+                    {eventsOpen ? 'Nhật ký chuyến' : 'Xem nhật ký chuyến'}
+                  </Text>
+                </TouchableOpacity>
+                {eventsOpen ? (
+                  eventsLoading ? (
+                    <ActivityIndicator color="#2563EB" style={{ marginTop: 8 }} />
+                  ) : (
+                    events.map((event) => (
+                      <Text key={event.id} style={styles.modalInfoAddress}>
+                        {eventTypeLabel(event.event_type)}
+                        {event.barcode ? ` · ${event.barcode}` : ''}
+                        {event.occurred_at ? ` · ${formatDate(event.occurred_at)}` : ''}
+                      </Text>
+                    ))
+                  )
+                ) : null}
               </View>
               </ScrollView>
 
@@ -405,12 +501,17 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                       </TouchableOpacity>
 
                       <TouchableOpacity
-                        style={[styles.selfTransportButton, styles.actionButton]}
+                        style={[
+                          styles.selfTransportButton,
+                          styles.actionButton,
+                          activeItemCount === 0 && { opacity: 0.5 },
+                        ]}
                         onPress={handleSelfTransport}
+                        disabled={activeItemCount === 0}
                         activeOpacity={0.8}
                       >
                         <FontAwesome5 name="walking" size={16} color="#2563EB" />
-                        <Text style={styles.selfTransportButtonText}>Tự vận chuyển</Text>
+                        <Text style={styles.selfTransportButtonText}>Xuất phát</Text>
                       </TouchableOpacity>
                     </View>
                   ) : (
@@ -438,6 +539,14 @@ export const TripDetailsModal: React.FC<TripDetailsModalProps> = ({
                       </Text>
                     </TouchableOpacity>
                   )}
+                  {showOutboundActions && onCancel ? (
+                    <TouchableOpacity
+                      onPress={() => tripDetails.id && onCancel(tripDetails.id)}
+                      style={{ marginTop: 10, alignItems: 'center' }}
+                    >
+                      <Text style={[styles.itemActionText, { color: '#DC2626' }]}>Huỷ chuyến</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
               )}
             </>
@@ -624,6 +733,17 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: "700",
     color: "#2563EB",
+  },
+  itemActions: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  itemActionText: {
+    color: '#2563EB',
+    fontWeight: '700',
+    fontSize: 13,
   },
 });
 

@@ -1,3 +1,4 @@
+import { VariantGroupPicker } from "@/components/products/VariantGroupPicker";
 import { ProductType } from "@/constants/enum";
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -38,6 +39,9 @@ export interface AddInventoryEmbeddedPanelProps {
   handlePriceChange: (v: string) => void;
   unit: string;
   setUnit: (v: string) => void;
+  variantGroup: string;
+  setVariantGroup: (v: string) => void;
+  storeId?: string;
   description: string;
   setDescription: (v: string) => void;
   thumbnailImage: ImagePicker.ImagePickerAsset | null;
@@ -112,6 +116,9 @@ export const AddInventoryEmbeddedPanel: React.FC<AddInventoryEmbeddedPanelProps>
   handlePriceChange,
   unit,
   setUnit,
+  variantGroup,
+  setVariantGroup,
+  storeId,
   description,
   setDescription,
   thumbnailImage,
@@ -242,6 +249,17 @@ export const AddInventoryEmbeddedPanel: React.FC<AddInventoryEmbeddedPanelProps>
             />
           </Field>
         </View>
+
+        {type !== ProductType.ASSET && (
+          <Field label="Nhóm biến thể">
+            <VariantGroupPicker
+              storeId={storeId}
+              value={variantGroup}
+              onChange={setVariantGroup}
+              inputStyle={styles.input}
+            />
+          </Field>
+        )}
 
         <Field label="Mô tả">
           <TextInput

@@ -151,6 +151,8 @@ export const getPaymentMethodDisplay = (paymentStatus: PaymentStatus): string =>
   switch (paymentStatus) {
     case PaymentStatus.PAID:
       return "Đã thanh toán";
+    case PaymentStatus.WAITING_CONFIRM:
+      return "Chờ cửa hàng xác nhận tiền";
     case PaymentStatus.PARTIAL_PAID:
       return "Thanh toán một phần";
     case PaymentStatus.UNPAID:
@@ -170,6 +172,8 @@ export function getPaymentStatusBadge(
   switch (status as PaymentStatus) {
     case PaymentStatus.UNPAID:
       return { text: "Chưa thanh toán", color: "#B91C1C", bgColor: "#FEE2E2" };
+    case PaymentStatus.WAITING_CONFIRM:
+      return { text: "Chờ xác nhận tiền", color: "#92400E", bgColor: "#FEF3C7" };
     case PaymentStatus.PARTIAL_PAID:
       return { text: "Thanh toán một phần", color: "#92400E", bgColor: "#FEF3C7" };
     case PaymentStatus.PAID:

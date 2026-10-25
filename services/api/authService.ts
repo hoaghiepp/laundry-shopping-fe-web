@@ -5,16 +5,17 @@ import { plainAxios, userAxios } from "@/lib/apiClient";
 import { clearTokens } from "@/lib/tokenStore";
 import * as SecureStore from "@/lib/secureStorage";
 
+/** Online register. Phone is the login id. Omit empty optional fields at the call site. */
 export interface RegisterRequest {
-  email: string;
+  phoneNumber: string;
   password: string;
-  full_name: string;
-  phone_number: string;
+  fullName?: string;
   gender?: string;
+  email?: string;
 }
 
 export interface LoginRequest {
-  email: string;
+  username: string;
   password: string;
 }
 
@@ -48,11 +49,12 @@ export function extractLoginTokens(result: unknown): {
 
 /** User-facing message after `authService.login` fails (e.g. 401 = wrong credentials, no refresh involved). */
 export function getLoginFailureMessage(error: unknown): string {
-  if (axios.isAxiosError(error) && error.response?.status === 401) {
-    return "Đăng nhập thất bại. Email hoặc mật khẩu không đúng.";
-  }
   if (axios.isAxiosError(error)) {
     const d = error.response?.data as Record<string, unknown> | undefined;
+    const code = String((d?.meta as { code?: unknown } | undefined)?.code ?? "");
+    if (error.response?.status === 401 || code === "401001") {
+      return "Đăng nhập thất bại. Tên đăng nhập hoặc mật khẩu không đúng.";
+    }
     const m =
       typeof d?.message === "string"
         ? d.message
@@ -70,7 +72,14 @@ export function getLoginFailureMessage(error: unknown): string {
 
 export const authService = {
   register: async (data: RegisterRequest) => {
-    const res = await plainAxios.post(`${API_BASE_URL}/v1/public/customers/register`, data);
+    const body: RegisterRequest = {
+      phoneNumber: data.phoneNumber.trim(),
+      password: data.password,
+    };
+    if (data.fullName?.trim()) body.fullName = data.fullName.trim();
+    if (data.gender) body.gender = data.gender;
+    if (data.email?.trim()) body.email = data.email.trim();
+    const res = await plainAxios.post(`${API_BASE_URL}/v1/public/customers/register`, body);
     return res.data;
   },
 

@@ -26,7 +26,7 @@ export async function loginAndStoreCustomerOrderTokens(
   try {
     const customerOrderEmail = customerOrderEmailFromStaffEmail(staffEmail);
     const res = await authService.login({
-      email: customerOrderEmail,
+      username: customerOrderEmail,
       password,
     });
     const tokens = extractLoginTokens(res);

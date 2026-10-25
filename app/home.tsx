@@ -2,6 +2,7 @@ import { BottomNav } from "@/components/home/BottomNav";
 import { BusinessFooter } from "@/components/home/BusinessFooter";
 import { HomeHeader } from "@/components/home/HomeHeader";
 import { ProductCard } from "@/components/home/ProductCard";
+import { CatalogProductSlots } from "@/components/products/CatalogProductSlots";
 import { PromotionBanner } from "@/components/home/PromotionBanner";
 import { ServiceButton } from "@/components/home/ServiceButton";
 import { WalletCard } from "@/components/home/WalletCard";
@@ -26,6 +27,7 @@ import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import {
   CustomerPackageStatus,
   DeliveryOptions,
+  OrderStatus,
   PickupMethod,
   ProductStatus,
   ProductType,
@@ -35,6 +37,7 @@ import {
   StoreType
 } from "@/constants/enum";
 import { ProductItem } from "@/models/model";
+import { expandVariantGroups, groupCatalogProducts, mergeProductsById } from "@/utils/variantGroup";
 import { authService, productService } from "@/services/api";
 import { cartService } from "@/services/api/cartService";
 import {
@@ -43,6 +46,7 @@ import {
   customerService,
 } from "@/services/api/customerService";
 import { fcmService } from "@/services/api/fcmService";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import { Order, OrderCheckoutReq, orderService } from "@/services/api/orderService";
 import { packageService } from "@/services/api/packageProductService";
 import { promotionService } from "@/services/api/promotionService";
@@ -88,6 +92,7 @@ export default function HomeScreen() {
   const [packagesHasMore, setPackagesHasMore] = useState(true);
   const [packagesLoadingMore, setPackagesLoadingMore] = useState(false);
   const [lastOrder, setLastOrder] = useState<Order | null>(null);
+  const [needConfirmCount, setNeedConfirmCount] = useState(0);
   const [isUpdatingCart, setIsUpdatingCart] = useState(false);
   const [promotions, setPromotions] = useState<any[]>([]);
   const [savedPromotionCodes, setSavedPromotionCodes] = useState<Set<string>>(new Set());
@@ -246,6 +251,7 @@ export default function HomeScreen() {
         shipping_phone_number: selectedAddress.phone_number || "",
         is_split_shipment: deliveryOption === DeliveryOptions.SEPARATE,
         is_need_shipment: pickupMethod === PickupMethod.SERVICE,
+        same_day_service: false,
         // ...(promotionId && { customer_promotion_id: promotionId }),
         // shipping_location is optional - can be added later if needed
         // shipping_location: shippingLocation,
@@ -339,18 +345,23 @@ export default function HomeScreen() {
         status: ProductStatus.ACTIVE,
       });
       // Filter to only show GOODS type products
-      const goodsProducts = (res.data || []).filter(
-        (product: ProductItem) => product.type === "GOODS"
+      const goodsProducts = await expandVariantGroups(
+        (res.data || []).filter((product: ProductItem) => product.type === "GOODS"),
+        { type: ProductType.GOODS }
       );
 
       if (append) {
-        setAllProducts(prev => [...prev, ...goodsProducts]);
+        setAllProducts(prev => mergeProductsById(prev, goodsProducts));
       } else {
-        // Shuffle and take first 10 for random display
-        const shuffled = goodsProducts.sort(() => Math.random() - 0.5);
-        const random10 = shuffled.slice(0, 10);
-        setProducts(random10);
-        setAllProducts(goodsProducts);
+        const shuffled = [...groupCatalogProducts(goodsProducts)].sort(() => Math.random() - 0.5);
+        const ordered = shuffled.flatMap((entry) =>
+          entry.kind === "single" ? [entry.product] : entry.products
+        );
+        const previewCount = shuffled
+          .slice(0, 10)
+          .reduce((count, entry) => count + (entry.kind === "single" ? 1 : entry.products.length), 0);
+        setProducts(ordered.slice(0, previewCount));
+        setAllProducts(ordered);
       }
       setProductsPage(page);
     } catch (error) {
@@ -362,7 +373,7 @@ export default function HomeScreen() {
     // If we have more products in allProducts, use those first
     if (allProducts.length > products.length) {
       const remaining = allProducts.slice(products.length, products.length + 10);
-      setProducts(prev => [...prev, ...remaining]);
+      setProducts(prev => mergeProductsById(prev, remaining));
     } else {
       // Otherwise fetch more from API
       const nextPage = productsPage + 1;
@@ -377,8 +388,11 @@ export default function HomeScreen() {
         type: ProductType.SERVICE,
       });
       // Filter to only show SERVICE type products
-      const serviceProducts = res.data || [];
-      setServicesHasMore(serviceProducts.length >= SERVICES_PAGE_SIZE);
+      const pageItems: ProductItem[] = res.data || [];
+      setServicesHasMore(pageItems.length >= SERVICES_PAGE_SIZE);
+      const serviceProducts = await expandVariantGroups(pageItems, {
+        type: ProductType.SERVICE,
+      });
       servicesPageRef.current = page;
 
       if (append) {
@@ -647,6 +661,40 @@ export default function HomeScreen() {
     return () => backHandler.remove();
   }, [activeScreen]);
 
+  const fetchNeedConfirmOrderCount = async () => {
+    if (!customerProfile?.id) {
+      setNeedConfirmCount(0);
+      return;
+    }
+    try {
+      const response = await orderService.searchCustomerOrders(
+        {
+          customer_id: customerProfile.id,
+          status: OrderStatus.NEED_CUSTOMER_CONFIRMATION,
+          fetch_order_items: false,
+          fetch_order_logs: false,
+        },
+        { page: 0, size: 1 }
+      );
+      setNeedConfirmCount(response.meta?.total ?? 0);
+    } catch (error) {
+      console.error("Error fetching need-confirm order count:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchNeedConfirmOrderCount();
+  }, [customerProfile?.id]);
+
+  useOrderStream({
+    onReady: () => {
+      fetchNeedConfirmOrderCount();
+    },
+    onOrderUpdated: () => {
+      fetchNeedConfirmOrderCount();
+    },
+  });
+
   // Refetch customer profile when wallet screen is focused
   useEffect(() => {
     if (activeScreen === ScreenType.WALLET) {
@@ -839,7 +887,11 @@ export default function HomeScreen() {
                     setActiveScreen(ScreenType.ORDER_DETAIL);
                   }}
                 />
-                <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+                <BottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          ordersBadge={needConfirmCount}
+        />
               </View>
             );
           }
@@ -943,7 +995,7 @@ export default function HomeScreen() {
             console.error("Error status code:", error?.response?.status);
             let errorMessage;
             if (error?.response?.status === 400) {
-              errorMessage = "Không đủ tiền trong tài khoản vui lòng nạp thêm";
+              errorMessage = "Không đủ số dư ví. Nạp ví qua VietQR đang tạm tắt.";
             } else {
               errorMessage =
                 error?.response?.data?.meta?.message ||
@@ -966,7 +1018,11 @@ export default function HomeScreen() {
           onRemoveItem={(id) => removeItemFromCart(id)}
           onUpdateQuantity={(id, qty) => updateCartItem(id, qty)}
         />
-        <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          ordersBadge={needConfirmCount}
+        />
       </View>
     );
   }
@@ -989,7 +1045,11 @@ export default function HomeScreen() {
             setActiveScreen(ScreenType.ORDER_DETAIL);
           }}
         />
-        <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          ordersBadge={needConfirmCount}
+        />
       </View>
     );
   }
@@ -1027,7 +1087,11 @@ export default function HomeScreen() {
             Alert.alert("Return", "Return and refund");
           }}
         />
-        <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          ordersBadge={needConfirmCount}
+        />
       </View>
     );
   }
@@ -1174,17 +1238,21 @@ export default function HomeScreen() {
               }}
               scrollEventThrottle={400}
             >
-              {services.map((service) => (
-                <ProductCard
-                  key={service.id}
-                  product={service}
-                  onPress={(id) => {
-                    setSelectedProduct(service);
-                    setActiveScreen(ScreenType.PRODUCT_DETAIL);
-                  }}
-                  onAddToCart={() => addProductToCart(service)}
-                />
-              ))}
+              <CatalogProductSlots
+                products={services}
+                variantLayout="card"
+                onSelectVariant={(service) => addProductToCart(service)}
+                renderSingle={(service) => (
+                  <ProductCard
+                    product={service}
+                    onPress={() => {
+                      setSelectedProduct(service);
+                      setActiveScreen(ScreenType.PRODUCT_DETAIL);
+                    }}
+                    onAddToCart={() => addProductToCart(service)}
+                  />
+                )}
+              />
             </ScrollView>
           ) : (
             <View style={styles.serviceGrid}>
@@ -1234,17 +1302,21 @@ export default function HomeScreen() {
             }}
             scrollEventThrottle={400}
           >
-            {products.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onPress={(id) => {
-                  setSelectedProduct(product);
-                  setActiveScreen(ScreenType.PRODUCT_DETAIL);
-                }}
-                onAddToCart={() => addProductToCart(product)}
-              />
-            ))}
+            <CatalogProductSlots
+              products={products}
+              variantLayout="card"
+              onSelectVariant={(product) => addProductToCart(product)}
+              renderSingle={(product) => (
+                <ProductCard
+                  product={product}
+                  onPress={() => {
+                    setSelectedProduct(product);
+                    setActiveScreen(ScreenType.PRODUCT_DETAIL);
+                  }}
+                  onAddToCart={() => addProductToCart(product)}
+                />
+              )}
+            />
           </ScrollView>
         </View>
         {packages.length > 0 && (
@@ -1319,7 +1391,11 @@ export default function HomeScreen() {
           storeCount={storeCount}
         />
       </ScrollView>
-      <BottomNav activeTab={activeTab} onTabChange={handleTabChange} />
+      <BottomNav
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
+        ordersBadge={needConfirmCount}
+      />
     </View>
   );
 }

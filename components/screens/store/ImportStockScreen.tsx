@@ -1,7 +1,9 @@
 import { LoadingScreen } from '@/components/ui/LoadingScreen';
 import { ProductType } from '@/constants/enum';
 import { compatAlert } from '@/lib/compatAlert';
+import { VariantGroupLabel } from '@/components/products/VariantGroupLabel';
 import { ProductItem } from '@/models/model';
+import { variantGroupOf } from '@/utils/variantGroup';
 import { storeService } from '@/services/api/storeService';
 import { FontAwesome5 } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -151,6 +153,7 @@ export const ImportStockScreen: React.FC<ImportStockScreenProps> = ({
                   <Text style={styles.meta}>
                     Tồn kho: {product.stock_quantity ?? 0} {product.unit || ''}
                   </Text>
+                  <VariantGroupLabel value={variantGroupOf(product)} style={styles.meta} />
                 </View>
               </View>
 

@@ -5,6 +5,9 @@ import {
   FactoryOutboundSection,
   Trip,
 } from '@/components/factory/logistics';
+import { FactoryItemScanScreen } from '@/components/screens/shared/FactoryItemScanScreen';
+import { ItemPassportScreen } from '@/components/screens/shared/ItemPassportScreen';
+import { TripBuilderScreen } from '@/components/screens/shared/TripBuilderScreen';
 import { CarrierSelectionDialog, TripDetailsModal } from '@/components/store/logistics';
 import { LogisticTripStatus } from '@/constants/enum';
 import { AddressLocation, goshipService, ShipmentAddress, ShipmentRequest } from '@/services/api/goshipService';
@@ -12,7 +15,8 @@ import { logisticService } from '@/services/api/logisticService';
 import { orderService } from '@/services/api/orderService';
 import { storeService } from '@/services/api/storeService';
 import React, { useEffect, useState } from 'react';
-import { Alert, ScrollView, StyleSheet, View } from 'react-native';
+import { extractApiErrorMessage } from '@/services/api/apiUtils';
+import { Alert, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface FactoryLogisticsScreenProps {
   factoryId?: string;
@@ -56,8 +60,17 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
     tripDetails: any;
   } | null>(null);
 
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [showPassport, setShowPassport] = useState(false);
+  const [passportBarcode, setPassportBarcode] = useState<string | undefined>();
+  const [passportTrackingId, setPassportTrackingId] = useState<string | undefined>();
+  const [showFactoryScan, setShowFactoryScan] = useState(false);
+  const [tripCodeInput, setTripCodeInput] = useState('');
+  const [tripStatusInput, setTripStatusInput] = useState('');
+  const [appliedTripQuery, setAppliedTripQuery] = useState<{ trip_code?: string; status?: string }>({});
+
   const handleCreateShipment = () => {
-    Alert.alert('Tạo chuyến trả', 'Quét gom hàng & Tạo chuyến trả về tiệm');
+    setShowBuilder(true);
   };
 
   // Fetch trips for outbound (source_store_id = factoryId) - Factory sending back to stores
@@ -69,6 +82,7 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
       const response = await logisticService.searchTrips(
         {
           source_store_id: factoryId,
+          ...appliedTripQuery,
         },
         { page: 0, size: 100 }
       );
@@ -101,6 +115,7 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
       const response = await logisticService.searchTrips(
         {
           destination_store_id: factoryId,
+          ...appliedTripQuery,
         },
         { page: 0, size: 100 }
       );
@@ -110,8 +125,10 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
         const sortedTrips = [...response.data].sort((a: Trip, b: Trip) => {
           const statusOrder: Record<string, number> = {
             IN_TRANSIT: 1,
-            CREATED: 2,
-            COMPLETED: 3,
+            ARRIVED: 2,
+            CREATED: 3,
+            COMPLETED: 4,
+            CANCELLED: 5,
           };
           const aOrder = statusOrder[a.status] || 999;
           const bOrder = statusOrder[b.status] || 999;
@@ -292,7 +309,7 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
         fetchInboundTrips();
       }
     }
-  }, [factoryId, activeTab, refreshTrigger]);
+  }, [factoryId, activeTab, refreshTrigger, appliedTripQuery]);
 
   const handleTripPress = async (tripId: string) => {
     try {
@@ -502,7 +519,7 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
         console.log('Shipment created:', shipmentResponse);
 
         try {
-          await logisticService.updateStatusTrips(tripId, LogisticTripStatus.IN_TRANSIT);
+          await logisticService.departTrip(tripId);
           handleCloseCarrierDialog();
           handleCloseModal();
           if (activeTab === 'out') {
@@ -562,9 +579,120 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
     }
   }, [initialTripId, factoryId]);
 
+  const refreshTrips = () => {
+    if (activeTab === 'out') fetchOutboundTrips();
+    else fetchInboundTrips();
+  };
+
+  const handleCancelTrip = (tripId: string) => {
+    Alert.alert('Huỷ chuyến', 'Chỉ huỷ được chuyến chưa xuất phát.', [
+      { text: 'Không', style: 'cancel' },
+      {
+        text: 'Huỷ chuyến',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await logisticService.cancelTrip(tripId);
+            handleCloseModal();
+            refreshTrips();
+          } catch (error) {
+            Alert.alert('Lỗi', extractApiErrorMessage(error, 'Không thể huỷ chuyến'));
+          }
+        },
+      },
+    ]);
+  };
+
+  const handleRemoveItem = async (itemId: string) => {
+    if (!tripDetails?.id) return;
+    try {
+      await logisticService.removeTripItem(tripDetails.id, itemId);
+      await handleTripPress(tripDetails.id);
+    } catch (error) {
+      Alert.alert('Lỗi', extractApiErrorMessage(error, 'Không thể bỏ món khỏi chuyến'));
+    }
+  };
+
+  if (showFactoryScan) {
+    return <FactoryItemScanScreen onBack={() => setShowFactoryScan(false)} />;
+  }
+
+  if (showPassport) {
+    return (
+      <ItemPassportScreen
+        trackingId={passportTrackingId}
+        initialBarcode={passportBarcode}
+        onBack={() => {
+          setShowPassport(false);
+          setPassportBarcode(undefined);
+          setPassportTrackingId(undefined);
+        }}
+      />
+    );
+  }
+
+  if (showBuilder && factoryId) {
+    return (
+      <TripBuilderScreen
+        sourceStoreId={factoryId}
+        sourceKind="factory"
+        onBack={() => {
+          setShowBuilder(false);
+          fetchOutboundTrips();
+        }}
+        onDone={() => {
+          setShowBuilder(false);
+          fetchOutboundTrips();
+        }}
+      />
+    );
+  }
+
   return (
     <View style={styles.container}>
       <FactoryLogisticsHeader activeTab={activeTab} onTabChange={setActiveTab} />
+      <View style={styles.linkRow}>
+        <TouchableOpacity onPress={() => setShowFactoryScan(true)}>
+          <Text style={styles.passportLinkText}>Quét trạng thái</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.filterRow}>
+        <TextInput
+          style={styles.filterInput}
+          value={tripCodeInput}
+          onChangeText={setTripCodeInput}
+          placeholder="Mã chuyến"
+          placeholderTextColor="#9CA3AF"
+          autoCapitalize="characters"
+        />
+        <TouchableOpacity
+          style={styles.filterButton}
+          onPress={() =>
+            setAppliedTripQuery({
+              trip_code: tripCodeInput.trim() || undefined,
+              status: tripStatusInput || undefined,
+            })
+          }
+        >
+          <Text style={styles.filterButtonText}>Lọc</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.statusRow}>
+        {[
+          { value: '', label: 'Mọi trạng thái' },
+          { value: 'CREATED', label: 'Đã tạo' },
+          { value: 'IN_TRANSIT', label: 'Đang chạy' },
+          { value: 'ARRIVED', label: 'Đã đến' },
+          { value: 'COMPLETED', label: 'Hoàn thành' },
+          { value: 'CANCELLED', label: 'Đã huỷ' },
+        ].map((item) => (
+          <TouchableOpacity key={item.label} onPress={() => setTripStatusInput(item.value)}>
+            <Text style={[styles.statusChip, tripStatusInput === item.value && styles.statusChipOn]}>
+              {item.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <ScrollView
         style={styles.content}
@@ -601,21 +729,30 @@ export const FactoryLogisticsScreen: React.FC<FactoryLogisticsScreenProps> = ({
         trackingIdToOrderCode={trackingIdToOrderCode}
         trackingIdToBarcode={trackingIdToBarcode}
         factoryId={factoryId}
+        isInbound={activeTab === 'in'}
         onClose={handleCloseModal}
-        onScanInbound={onReceiveTrip}
+        onScanInbound={activeTab === 'in' ? onReceiveTrip : undefined}
         onOrderPress={handleOrderPress}
         onCallVehicle={activeTab === 'out' ? handleCallVehicle : undefined}
+        onCancel={activeTab === 'out' ? handleCancelTrip : undefined}
+        onRemoveItem={activeTab === 'out' ? handleRemoveItem : undefined}
+        onOpenPassport={(barcode) => {
+          handleCloseModal();
+          setPassportTrackingId(undefined);
+          setPassportBarcode(barcode);
+          setShowPassport(true);
+        }}
         onSelfTransport={
           activeTab === 'out'
             ? async (tripId: string, tripCode: string) => {
                 try {
-                  await logisticService.updateStatusTrips(tripId, LogisticTripStatus.IN_TRANSIT);
+                  await logisticService.departTrip(tripId);
                   handleCloseModal();
                   fetchOutboundTrips();
                   Alert.alert('Thành công', 'Đã chuyển trạng thái sang đang vận chuyển');
                 } catch (error: any) {
                   console.error('Failed to update trip status:', error);
-                  Alert.alert('Lỗi', error?.message || 'Không thể cập nhật trạng thái chuyến đi');
+                  Alert.alert('Lỗi', extractApiErrorMessage(error, 'Không thể xuất phát'));
                 }
               }
             : undefined
@@ -663,4 +800,51 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingBottom: 20,
   },
+  passportLink: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  linkRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  passportLinkText: {
+    color: '#2563EB',
+    fontWeight: '700',
+  },
+  filterRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  filterInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFFFFF',
+    color: '#111827',
+  },
+  filterButton: {
+    backgroundColor: '#2563EB',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+  },
+  filterButtonText: { color: '#FFFFFF', fontWeight: '700' },
+  statusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  statusChip: { color: '#4B5563', fontSize: 12 },
+  statusChipOn: { color: '#1D4ED8', fontWeight: '700' },
 });

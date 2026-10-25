@@ -6,6 +6,8 @@ import { compatAlert } from "@/lib/compatAlert";
 import { ProductItem } from "@/models/model";
 import { CreatePackageRequest, packageService, UpdatePackageRequest } from "@/services/api/packageProductService";
 import { productService, UpdateProductRequest } from "@/services/api/productService";
+import { VariantGroupPicker } from "@/components/products/VariantGroupPicker";
+import { VARIANT_GROUP_MAX_LENGTH, variantGroupOf } from "@/utils/variantGroup";
 import { uploadService } from "@/services/api/uploadService";
 import { FontAwesome5 } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
@@ -62,6 +64,7 @@ type FormSnapshot = {
   existingThumbnailUrl: string;
   existingGalleryUrls: string[];
   selectedCategoryIds: string[];
+  variantGroup: string;
 };
 
 function arraysEqual(a: string[], b: string[]): boolean {
@@ -82,6 +85,7 @@ function snapshotFromProduct(product: ProductItem): FormSnapshot {
     existingThumbnailUrl: product.thumbnail_url || "",
     existingGalleryUrls: [...(product.gallery_urls || [])],
     selectedCategoryIds: [],
+    variantGroup: variantGroupOf(product) ?? "",
   };
 }
 
@@ -98,6 +102,7 @@ function snapshotFromPackage(pkg: PackageItem): FormSnapshot {
     existingThumbnailUrl: pkg.thumbnail_url || "",
     existingGalleryUrls: [...(pkg.gallery_urls || [])],
     selectedCategoryIds: [],
+    variantGroup: "",
   };
 }
 
@@ -137,6 +142,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
   >([]);
   const [existingGalleryUrls, setExistingGalleryUrls] = useState<string[]>([]);
   const [description, setDescription] = useState("");
+  const [variantGroup, setVariantGroup] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [categorySearch, setCategorySearch] = useState("");
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
@@ -194,6 +200,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
         setStockQuantity(productItem.stock_quantity?.toString() || "");
         setUnit(productItem.unit || "");
         setDescription(productItem.description || "");
+        setVariantGroup(variantGroupOf(productItem) ?? "");
         setExistingThumbnailUrl(productItem.thumbnail_url || "");
         setExistingGalleryUrls(productItem.gallery_urls || []);
         setIsActive(
@@ -502,11 +509,25 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             gallery_urls: galleryUrls,
             priority: 1,
           };
+          const nextGroup = variantGroup.trim();
+          if (nextGroup.length > VARIANT_GROUP_MAX_LENGTH) {
+            compatAlert("Lỗi", "Nhóm biến thể tối đa 100 ký tự");
+            return;
+          }
+          const previousGroup = variantGroupOf(productItem) ?? "";
+          if (nextGroup !== previousGroup) {
+            updateData.variant_group = nextGroup ? nextGroup : null;
+          }
           const res = await productService.updateProduct(editItemId, updateData);
           console.log("Update product response:", res);
           compatAlert("Thành công", "Cập nhật tiện ích thành công");
         } else {
           // Create regular product
+          const nextGroup = variantGroup.trim();
+          if (nextGroup.length > VARIANT_GROUP_MAX_LENGTH) {
+            compatAlert("Lỗi", "Nhóm biến thể tối đa 100 ký tự");
+            return;
+          }
           const res = await productService.addProduct({
             name,
             price: Number(price),
@@ -521,6 +542,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
             thumbnail_url: thumbnailUrl,
             gallery_urls: galleryUrls,
             priority: 1,
+            ...(nextGroup ? { variant_group: nextGroup } : {}),
           });
           console.log("Add product response:", res);
           compatAlert("Thành công", "Thêm tiện ích thành công");
@@ -554,6 +576,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
         stockQuantity.trim() ||
         unit.trim() ||
         description.trim() ||
+        variantGroup.trim() ||
         selectedServiceId ||
         thumbnailImage ||
         galleryImages.length > 0
@@ -570,6 +593,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
     if (stockQuantity.trim() !== initial.stockQuantity) return true;
     if (unit.trim() !== initial.unit) return true;
     if (description.trim() !== initial.description) return true;
+    if (variantGroup.trim() !== initial.variantGroup) return true;
     if (selectedServiceId !== initial.selectedServiceId) return true;
     if (thumbnailImage) return true;
     if (galleryImages.length > 0) return true;
@@ -589,6 +613,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
     stockQuantity,
     unit,
     description,
+    variantGroup,
     selectedServiceId,
     thumbnailImage,
     galleryImages.length,
@@ -661,6 +686,9 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
           handlePriceChange={handlePriceChange}
           unit={unit}
           setUnit={setUnit}
+          variantGroup={variantGroup}
+          setVariantGroup={setVariantGroup}
+          storeId={storeId}
           description={description}
           setDescription={setDescription}
           thumbnailImage={thumbnailImage}
@@ -693,6 +721,7 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
           embedded && showSaveButton && styles.scrollContentWithFooter,
         ]}
         showsVerticalScrollIndicator={embedded}
+        keyboardShouldPersistTaps="handled"
       >
         <View style={embedded ? styles.webPanelBody : undefined}>
         {!isEditMode && (
@@ -877,6 +906,18 @@ export const AddInventoryScreen: React.FC<AddInventoryScreenProps> = ({
                   />
                 </View>
               </View>
+
+              {type !== ProductType.ASSET && (
+                <View style={styles.inputGroup}>
+                  <Text style={labelStyle}>Nhóm biến thể</Text>
+                  <VariantGroupPicker
+                    storeId={storeId}
+                    value={variantGroup}
+                    onChange={setVariantGroup}
+                    inputStyle={inputStyle}
+                  />
+                </View>
+              )}
 
               <View style={styles.inputGroup}>
                 <Text style={labelStyle}>Mô tả</Text>

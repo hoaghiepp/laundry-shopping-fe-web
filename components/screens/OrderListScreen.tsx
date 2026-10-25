@@ -1,5 +1,7 @@
 import { OrderStatus, SecureStoreKeys } from "@/constants/enum";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import { CustomerProfile } from "@/services/api/customerService";
+import { applyOrderStreamPatch } from "@/services/api/orderStream";
 import { Order, orderService } from "@/services/api/orderService";
 import { storeService } from "@/services/api/storeService";
 import { FontAwesome5 } from "@expo/vector-icons";
@@ -151,6 +153,42 @@ export const OrderListScreen: React.FC<OrderListScreenProps> = ({
       setRefreshing(false);
     }
   };
+
+  const originalOrdersRef = useRef(originalOrders);
+  originalOrdersRef.current = originalOrders;
+  const hubNamesRef = useRef(hubNames);
+  hubNamesRef.current = hubNames;
+  const listRefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useOrderStream({
+    onReady: () => {
+      if (customerId && originalOrdersRef.current.length === 0) fetchOrders(true);
+    },
+    onOrderUpdated: (event) => {
+      const existing = originalOrdersRef.current.find(
+        (order) => order.id === event.order_id
+      );
+      if (!existing) {
+        if (listRefetchTimer.current || !customerId) return;
+        listRefetchTimer.current = setTimeout(() => {
+          listRefetchTimer.current = null;
+          fetchOrders(true);
+        }, 200);
+        return;
+      }
+      const patched = applyOrderStreamPatch(existing, event);
+      setOriginalOrders((prev) =>
+        prev.map((order) => (order.id === patched.id ? patched : order))
+      );
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === patched.id
+            ? mapOrderToDisplay(patched, hubNamesRef.current)
+            : order
+        )
+      );
+    },
+  });
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);

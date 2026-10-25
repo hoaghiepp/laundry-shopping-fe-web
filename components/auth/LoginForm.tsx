@@ -3,32 +3,64 @@ import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { AuthInput } from './AuthInput';
 
+type LoginMethod = 'phone' | 'email';
+
 interface LoginFormProps {
-  onLogin: (email: string, password: string, rememberMe: boolean) => void;
+  onLogin: (username: string, password: string, rememberMe: boolean) => void;
 }
 
 export const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
-  const [email, setEmail] = useState('');
+  const [method, setMethod] = useState<LoginMethod>('phone');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
 
-  const handleLogin = () => {
-    onLogin(email, password, rememberMe);
+  const selectMethod = (next: LoginMethod) => {
+    if (next === method) return;
+    setMethod(next);
+    setUsername('');
   };
+
+  const handleLogin = () => {
+    onLogin(username.trim(), password, rememberMe);
+  };
+
+  const isPhone = method === 'phone';
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Đăng nhập</Text>
       <Text style={styles.subtitle}>Quản lý cửa hàng, kho hàng và đơn hàng</Text>
 
+      <View style={styles.methodRow}>
+        <TouchableOpacity
+          style={[styles.methodBtn, isPhone && styles.methodBtnOn]}
+          onPress={() => selectMethod('phone')}
+          activeOpacity={0.8}
+        >
+          <FontAwesome5 name="phone-alt" size={11} color={isPhone ? '#FFFFFF' : '#4B5563'} />
+          <Text style={[styles.methodText, isPhone && styles.methodTextOn]}>Số điện thoại</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.methodBtn, !isPhone && styles.methodBtnOn]}
+          onPress={() => selectMethod('email')}
+          activeOpacity={0.8}
+        >
+          <FontAwesome5 name="envelope" size={11} color={!isPhone ? '#FFFFFF' : '#4B5563'} />
+          <Text style={[styles.methodText, !isPhone && styles.methodTextOn]}>Email</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.form}>
         <AuthInput
-          label="EMAIL"
-          icon="envelope"
-          placeholder="example@gmail.com"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
+          label={isPhone ? 'SỐ ĐIỆN THOẠI' : 'EMAIL'}
+          icon={isPhone ? 'phone-alt' : 'envelope'}
+          placeholder={isPhone ? '0912 xxx xxx' : 'example@gmail.com'}
+          keyboardType={isPhone ? 'phone-pad' : 'email-address'}
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={username}
+          onChangeText={setUsername}
         />
 
         <AuthInput
@@ -76,9 +108,37 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 13,
     color: '#6B7280',
-    marginBottom: 22,
+    marginBottom: 16,
     textAlign: 'center',
     lineHeight: 18,
+  },
+  methodRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 4,
+  },
+  methodBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  methodBtnOn: {
+    backgroundColor: '#2563EB',
+  },
+  methodText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#4B5563',
+  },
+  methodTextOn: {
+    color: '#FFFFFF',
   },
   form: {
     marginBottom: 24,

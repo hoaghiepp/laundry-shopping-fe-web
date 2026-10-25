@@ -1,11 +1,13 @@
 import { ChangePasswordScreen } from "@/components/auth";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import { PromotionScreen } from "@/components/factory-screens";
 import { isOnlyGoodsOrder } from "@/components/orders";
 import {
     AddInventoryScreen,
     CustomerDetailScreen,
-    CustomerListScreen,
+    CustomerScreen,
     InventoryScreen,
+    ItemTrackingTab,
     LogisticsScreen,
     OrdersScreen,
     ProcessDetailScreen,
@@ -63,7 +65,9 @@ type ScreenType =
   | "orders"
   | "inventory"
   | "logistics"
+  | "item-search"
   | "report"
+  | "customers"
   | "profile"
   | "process-detail"
   | "add-inventory"
@@ -72,7 +76,6 @@ type ScreenType =
   | "qr-scan"
   | "promotion"
   | "manage-stores"
-  | "customer-list"
   | "customer-detail"
   | "create-order"
   | "staff-order"
@@ -92,13 +95,22 @@ export default function StoreHomeScreen() {
   const [editingPackage, setEditingPackage] = useState<any | null>(null);
   const [ordersRefreshKey, setOrdersRefreshKey] = useState(0);
   const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [customerInitialView, setCustomerInitialView] = useState<"stats" | "list">("stats");
+  const [customerDetailRange, setCustomerDetailRange] = useState<{ fromDate: Date; toDate: Date } | null>(null);
 
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  /** Tabs stay mounted after the first visit so switching back does not refetch. */
+  const mountedTabsRef = useRef<Set<StoreTabType>>(
+    new Set([StoreTabType.ORDERS])
+  );
+  mountedTabsRef.current.add(activeTab);
   /** Side panel width (process detail + inventory editor share this). */
   /** Right column (order detail, inventory editor) — ~20% wider than previous cap. */
   const sidePanelW = Math.min(672, Math.max(360, Math.floor(windowWidth * 0.528)));
   /** Animated width for inventory add/edit panel (smooth resize of main + panel). */
   const inventoryPanelAnimW = useRef(new Animated.Value(0)).current;
+
+  useOrderStream({ storeId: selectedStore?.id ?? null });
 
   const goToOrdersHome = useCallback(() => {
     setActiveScreen("orders");
@@ -199,11 +211,6 @@ export default function StoreHomeScreen() {
         return true;
       }
 
-      if (activeScreen === "customer-list") {
-        handleBackFromCustomerList();
-        return true;
-      }
-
       if (activeScreen === "customer-detail") {
         handleBackFromCustomerDetail();
         return true;
@@ -225,7 +232,9 @@ export default function StoreHomeScreen() {
         activeScreen === StoreTabType.ORDERS ||
         activeScreen === StoreTabType.INVENTORY ||
         activeScreen === StoreTabType.LOGISTICS ||
+        activeScreen === StoreTabType.ITEM_SEARCH ||
         activeScreen === StoreTabType.REPORT ||
+        activeScreen === StoreTabType.CUSTOMERS ||
         activeScreen === StoreTabType.PROFILE
       ) {
         return true; // Prevent default behavior (don't quit app)
@@ -299,6 +308,7 @@ export default function StoreHomeScreen() {
     setActiveScreen(tab);
     setEditingProduct(null);
     setEditingPackage(null);
+    if (tab === StoreTabType.CUSTOMERS) setCustomerInitialView("stats");
   };
 
   const handleOrderPress = (order: Order) => {
@@ -411,22 +421,31 @@ export default function StoreHomeScreen() {
   };
 
   const handleCustomerListPress = () => {
-    setActiveScreen("customer-list");
+    setCustomerInitialView("list");
+    setActiveTab(StoreTabType.CUSTOMERS);
+    setActiveScreen(StoreTabType.CUSTOMERS);
   };
 
-  const handleCustomerSelect = (customer: any) => {
+  const handleCustomerSelect = (
+    customer: any,
+    context?: { fromDate: Date; toDate: Date; returnView?: "stats" | "list" }
+  ) => {
     setSelectedCustomer(customer);
+    if (context?.fromDate && context?.toDate) {
+      setCustomerDetailRange({ fromDate: context.fromDate, toDate: context.toDate });
+      setCustomerInitialView(context.returnView ?? "stats");
+    } else {
+      setCustomerDetailRange(null);
+    }
     setActiveScreen("customer-detail");
   };
 
   const handleBackFromCustomerDetail = () => {
-    setActiveScreen("customer-list");
+    setCustomerDetailRange(null);
+    setActiveScreen(StoreTabType.CUSTOMERS);
+    setActiveTab(StoreTabType.CUSTOMERS);
   };
 
-  const handleBackFromCustomerList = () => {
-    setActiveScreen("profile");
-    setActiveTab(StoreTabType.PROFILE);
-  };
 
   const handleStaffOrderPress = () => {
     setActiveScreen("staff-order");
@@ -556,18 +575,6 @@ export default function StoreHomeScreen() {
     );
   }
 
-  if (activeScreen === "customer-list") {
-    return (
-      <View style={styles.container}>
-        <CustomerListScreen
-          storeId={selectedStore?.id ?? ""}
-          onBack={handleBackFromCustomerList}
-          onSelectCustomer={handleCustomerSelect}
-        />
-      </View>
-    );
-  }
-
   if (activeScreen === "customer-detail" && selectedCustomer) {
     return (
       <View style={styles.container}>
@@ -575,6 +582,8 @@ export default function StoreHomeScreen() {
           customer={selectedCustomer}
           storeId={selectedStore?.id ?? ""}
           onBack={handleBackFromCustomerDetail}
+          fromDate={customerDetailRange?.fromDate}
+          toDate={customerDetailRange?.toDate}
         />
       </View>
     );
@@ -627,41 +636,107 @@ export default function StoreHomeScreen() {
 
       <View style={styles.mainSplit}>
         <View style={styles.mainSplitPrimary}>
-          {(activeTab === StoreTabType.ORDERS || activeScreen === "process-detail") && (
-            <OrdersScreen
-              storeId={selectedStore?.id}
-              onOrderPress={handleOrderPress}
-              onQRScan={handleQRScan}
-              onCreateBatchShipment={handleCreateBatchShipment}
-              refreshKey={ordersRefreshKey}
-            />
+          {mountedTabsRef.current.has(StoreTabType.ORDERS) && (
+            <View
+              style={[
+                styles.tabPane,
+                activeTab !== StoreTabType.ORDERS &&
+                  activeScreen !== "process-detail" &&
+                  styles.tabPaneHidden,
+              ]}
+            >
+              <OrdersScreen
+                storeId={selectedStore?.id}
+                onOrderPress={handleOrderPress}
+                onQRScan={handleQRScan}
+                onCreateBatchShipment={handleCreateBatchShipment}
+                refreshKey={ordersRefreshKey}
+              />
+            </View>
           )}
 
-          {(activeTab === StoreTabType.INVENTORY ||
-            activeScreen === "add-inventory") && (
-            <InventoryScreen
-              onAddItem={handleAddInventory}
-              onEditProduct={handleEditProduct}
-              onEditPackage={handleEditPackage}
-              storeId={selectedStore?.id}
-            />
+          {mountedTabsRef.current.has(StoreTabType.INVENTORY) && (
+            <View
+              style={[
+                styles.tabPane,
+                activeTab !== StoreTabType.INVENTORY &&
+                  activeScreen !== "add-inventory" &&
+                  styles.tabPaneHidden,
+              ]}
+            >
+              <InventoryScreen
+                onAddItem={handleAddInventory}
+                onEditProduct={handleEditProduct}
+                onEditPackage={handleEditPackage}
+                storeId={selectedStore?.id}
+              />
+            </View>
           )}
 
-          {activeTab === StoreTabType.LOGISTICS && (
-            <LogisticsScreen
-              storeId={selectedStore?.id}
-              onOrderPress={handleOrderPress}
-            />
+          {mountedTabsRef.current.has(StoreTabType.LOGISTICS) && (
+            <View
+              style={[
+                styles.tabPane,
+                activeTab !== StoreTabType.LOGISTICS && styles.tabPaneHidden,
+              ]}
+            >
+              <LogisticsScreen
+                storeId={selectedStore?.id}
+                onOrderPress={handleOrderPress}
+              />
+            </View>
           )}
 
-          {activeTab === StoreTabType.REPORT && <ReportScreen storeId={selectedStore?.id} />}
+          {mountedTabsRef.current.has(StoreTabType.ITEM_SEARCH) && (
+            <View
+              style={[
+                styles.tabPane,
+                activeTab !== StoreTabType.ITEM_SEARCH && styles.tabPaneHidden,
+              ]}
+            >
+              <ItemTrackingTab storeId={selectedStore?.id} />
+            </View>
+          )}
 
-          {activeTab === StoreTabType.PROFILE && (
-            <StoreProfileScreen
-              storeId={selectedStore?.id}
-              onCustomerList={handleCustomerListPress}
-              onChangePassword={handleChangePasswordPress}
-            />
+          {mountedTabsRef.current.has(StoreTabType.REPORT) && (
+            <View
+              style={[
+                styles.tabPane,
+                activeTab !== StoreTabType.REPORT && styles.tabPaneHidden,
+              ]}
+            >
+              <ReportScreen storeId={selectedStore?.id} />
+            </View>
+          )}
+
+          {mountedTabsRef.current.has(StoreTabType.CUSTOMERS) && (
+            <View
+              style={[
+                styles.tabPane,
+                activeTab !== StoreTabType.CUSTOMERS && styles.tabPaneHidden,
+              ]}
+            >
+              <CustomerScreen
+                storeId={selectedStore?.id}
+                initialView={customerInitialView}
+                onSelectCustomer={handleCustomerSelect}
+              />
+            </View>
+          )}
+
+          {mountedTabsRef.current.has(StoreTabType.PROFILE) && (
+            <View
+              style={[
+                styles.tabPane,
+                activeTab !== StoreTabType.PROFILE && styles.tabPaneHidden,
+              ]}
+            >
+              <StoreProfileScreen
+                storeId={selectedStore?.id}
+                onCustomerList={handleCustomerListPress}
+                onChangePassword={handleChangePasswordPress}
+              />
+            </View>
           )}
         </View>
 
@@ -871,6 +946,14 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     minHeight: 0,
+  },
+  tabPane: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 0,
+  },
+  tabPaneHidden: {
+    display: "none",
   },
   processDetailColumn: {
     flexShrink: 0,

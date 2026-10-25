@@ -347,7 +347,7 @@ export default function LoginScreen() {
     setIsLoading(true);
     try {
       const response: any = await authService.login({
-        email,
+        username: email,
         password,
       });
 

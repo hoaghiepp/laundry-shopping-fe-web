@@ -153,6 +153,14 @@ export interface StoreCustomerListResponse {
   data: StoreCustomer[];
 }
 
+/** Offline customer. Do not send password — the customer claims it later on mobile register. */
+export interface CreateStaffCustomerRequest {
+  phoneNumber: string;
+  fullName?: string;
+  gender?: string;
+  email?: string;
+}
+
 export interface SearchIncidentsRequest {
   order_id?: string;
   tracking_id?: string;
@@ -483,6 +491,29 @@ export const storeService = {
     }
     catch (error) {
       throw new Error(extractApiErrorMessage(error, "Get customers of store failed"));
+    }
+  },
+
+  createStaffCustomer: async (data: CreateStaffCustomerRequest) => {
+    const token = await getStoreToken();
+    if (!token) {
+      throw new Error("Staff token not found");
+    }
+    const body: CreateStaffCustomerRequest = {
+      phoneNumber: data.phoneNumber.trim(),
+    };
+    if (data.fullName?.trim()) body.fullName = data.fullName.trim();
+    if (data.gender) body.gender = data.gender;
+    if (data.email?.trim()) body.email = data.email.trim();
+    try {
+      const response = await userAxios.post(
+        `${API_BASE_URL}/v1/staff/customers`,
+        body,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(extractApiErrorMessage(error, "Tạo khách hàng thất bại"));
     }
   },
 

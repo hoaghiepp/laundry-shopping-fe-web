@@ -96,6 +96,33 @@ function processQueue(err: any, token?: string) {
 }
 
 /**
+ * Same refresh used by the axios 401 interceptor (`POST /v1/public/refresh`).
+ * Shares the in-flight refresh so the order stream does not rotate the token twice.
+ * On failure, `refreshAccessToken` already runs the session-expired handler.
+ */
+export function refreshAccessTokenShared(): Promise<string> {
+  if (isRefreshing) {
+    return new Promise((resolve, reject) => {
+      failedQueue.push({ resolve, reject });
+    });
+  }
+
+  isRefreshing = true;
+  return refreshAccessToken()
+    .then((token) => {
+      processQueue(null, token);
+      return token;
+    })
+    .catch((error) => {
+      processQueue(error);
+      throw error;
+    })
+    .finally(() => {
+      isRefreshing = false;
+    });
+}
+
+/**
  * Response: nếu 401 thì refresh và retry.
  */
 userAxios.interceptors.response.use(

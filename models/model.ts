@@ -14,6 +14,8 @@ export interface ProductItem {
   price: number;
   priority: number;
   deleted: boolean;
+  /** Same non-empty value within a store renders as one catalog box. Null means standalone. */
+  variant_group?: string | null;
 }
 
 

@@ -1,6 +1,6 @@
 import { LogisticsSummaryCard } from '@/components/store/logistics/LogisticsSummaryCard';
 import { TripHistoryCard } from '@/components/store/logistics/TripHistoryCard';
-import { formatDate, getStatusDisplay } from '@/components/store/logistics/logisticsUtils';
+import { formatDate, getStatusDisplay, tripTypeLabel } from '@/components/store/logistics/logisticsUtils';
 import { LogisticTripStatus } from '@/constants/enum';
 import { FontAwesome5 } from '@expo/vector-icons';
 import React from 'react';
@@ -17,6 +17,7 @@ export interface Trip {
   source_store_id: string;
   destination_store_id: string;
   status: string;
+  trip_type?: string;
   created_date: string;
   last_modified_date: string;
   logistic_trip_items?: any[];
@@ -77,7 +78,7 @@ export const FactoryInboundSection: React.FC<FactoryInboundSectionProps> = ({
               key={trip.id}
               tripCode={trip.trip_code}
               date={formatDate(trip.created_date)}
-              location={`Từ ${sourceName} ${orderCodesText}`}
+              location={`${tripTypeLabel(trip.trip_type) || 'Chuyến'} · Từ ${sourceName} ${orderCodesText}`}
               statusDisplay={statusDisplay}
               onPress={() => onTripPress(trip.id)}
             />

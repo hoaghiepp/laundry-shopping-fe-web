@@ -1,9 +1,11 @@
+import { CatalogProductSlots } from '@/components/products/CatalogProductSlots';
 import { ProductGridCard } from '@/components/products/ProductGridCard';
 import { ProductSearchBar } from '@/components/products/ProductSearchBar';
 import { ProductStatus, ProductType } from '@/constants/enum';
 import { ProductItem } from '@/models/model';
 import { productService } from '@/services/api';
 import { packageService } from '@/services/api/packageProductService';
+import { expandVariantGroups, variantGroupOf } from '@/utils/variantGroup';
 import { storeService } from '@/services/api/storeService';
 import { FontAwesome5 } from '@expo/vector-icons';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -136,9 +138,9 @@ export const AllServicesScreen: React.FC<AllServicesScreenProps> = ({
         type: ProductType.GOODS,
         status: ProductStatus.ACTIVE,
       });
-      const raw = response?.data || [];
-
-      setGoodsHasMore(raw.length >= PAGE_SIZE);
+      const pageItems: ProductItem[] = response?.data || [];
+      setGoodsHasMore(pageItems.length >= PAGE_SIZE);
+      const raw = await expandVariantGroups(pageItems, { type: ProductType.GOODS });
       goodsPageRef.current = page + 1;
 
       if (reset) {
@@ -170,18 +172,19 @@ export const AllServicesScreen: React.FC<AllServicesScreenProps> = ({
         type: ProductType.SERVICE,
         status: ProductStatus.ACTIVE,
       });
-      const raw = response?.data || [];
-      setServicesHasMore(raw.length >= PAGE_SIZE);
+      const pageItems: ProductItem[] = response?.data || [];
+      setServicesHasMore(pageItems.length >= PAGE_SIZE);
+      const raw = await expandVariantGroups(pageItems, { type: ProductType.SERVICE });
       servicesPageRef.current = page + 1;
 
       if (reset) {
-        setServices(response?.data || []);
-        const grouped = await groupByStore(response?.data || []);
+        setServices(raw);
+        const grouped = await groupByStore(raw);
         setGroupedServices(grouped);
       } else {
         setServices((prev) => {
           const seen = new Set(prev.map((p: ProductItem) => p.id));
-          const next = response?.data?.filter((p: any) => !seen.has(p.id));
+          const next = raw.filter((p: ProductItem) => !seen.has(p.id));
           return [...prev, ...next];
         });
         setGroupedServices((prevGrouped) => {
@@ -262,7 +265,8 @@ export const AllServicesScreen: React.FC<AllServicesScreenProps> = ({
       const filteredProducts = products.filter((product) =>
         matchesSearch(product.name, searchQuery) ||
         matchesSearch(product.sku || '', searchQuery) ||
-        matchesSearch(product.description || '', searchQuery)
+        matchesSearch(product.description || '', searchQuery) ||
+        matchesSearch(variantGroupOf(product) || '', searchQuery)
       );
 
       if (filteredProducts.length === 0) {
@@ -273,14 +277,17 @@ export const AllServicesScreen: React.FC<AllServicesScreenProps> = ({
         <View key={storeId} style={styles.storeGroup}>
           <Text style={styles.storeName}>{storeName}</Text>
           <View style={styles.productsGrid}>
-            {filteredProducts.map((product) => (
-              <ProductGridCard
-                key={product.id}
-                product={product}
-                onPress={(id) => onProductPress(product)}
-                onAddToCart={(id) => onAddToCart(product)}
-              />
-            ))}
+            <CatalogProductSlots
+              products={filteredProducts}
+              onSelectVariant={(product) => onAddToCart(product)}
+              renderSingle={(product) => (
+                <ProductGridCard
+                  product={product}
+                  onPress={() => onProductPress(product)}
+                  onAddToCart={() => onAddToCart(product)}
+                />
+              )}
+            />
           </View>
         </View>
       );
@@ -293,7 +300,8 @@ export const AllServicesScreen: React.FC<AllServicesScreenProps> = ({
         const filteredProducts = products.filter((product) =>
           matchesSearch(product.name, searchQuery) ||
           matchesSearch(product.sku || '', searchQuery) ||
-          matchesSearch(product.description || '', searchQuery)
+          matchesSearch(product.description || '', searchQuery) ||
+          matchesSearch(variantGroupOf(product) || '', searchQuery)
         );
 
         if (filteredProducts.length === 0) return null;
@@ -389,14 +397,17 @@ export const AllServicesScreen: React.FC<AllServicesScreenProps> = ({
           <View style={styles.storeGroup}>
             <Text style={styles.storeName}>{item.storeName}</Text>
             <View style={styles.productsGrid}>
-              {item.products.map((product) => (
-                <ProductGridCard
-                  key={product.id}
-                  product={product}
-                  onPress={() => onProductPress(product)}
-                  onAddToCart={() => onAddToCart(product)}
-                />
-              ))}
+              <CatalogProductSlots
+                products={item.products}
+                onSelectVariant={(product) => onAddToCart(product)}
+                renderSingle={(product) => (
+                  <ProductGridCard
+                    product={product}
+                    onPress={() => onProductPress(product)}
+                    onAddToCart={() => onAddToCart(product)}
+                  />
+                )}
+              />
             </View>
           </View>
         )}

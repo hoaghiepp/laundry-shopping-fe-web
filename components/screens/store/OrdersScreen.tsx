@@ -1,4 +1,5 @@
 import { PromotionBanner } from "@/components/home/PromotionBanner";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import {
     BatchGroupCard,
     FactorySelectionDialog,
@@ -37,6 +38,7 @@ import {
     LogisticsTripItem,
     logisticService,
 } from "@/services/api/logisticService";
+import { applyOrderStreamPatch } from "@/services/api/orderStream";
 import { Order, orderService } from "@/services/api/orderService";
 import { StoreListItem, storeService } from "@/services/api/storeService";
 import { FontAwesome5 } from "@expo/vector-icons";
@@ -50,6 +52,110 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+
+const WAITING_CONFIRM_LABEL = "Chờ xác nhận tiền";
+
+function sortWaitingConfirmFirst(cards: OrderCardData[]): OrderCardData[] {
+  return [...cards].sort((a, b) => {
+    const aWait = a.paymentStatusBadge?.text === WAITING_CONFIRM_LABEL ? 0 : 1;
+    const bWait = b.paymentStatusBadge?.text === WAITING_CONFIRM_LABEL ? 0 : 1;
+    if (aWait !== bWait) return aWait - bWait;
+    return 0;
+  });
+}
+
+const STORE_TABS: OrderTab[] = [
+  "new",
+  "processing",
+  "waiting_transport",
+  "waiting_return",
+  "finished",
+  "cancelled",
+];
+
+function orderMatchesStoreTab(tab: OrderTab, order: Order): boolean {
+  switch (tab) {
+    case "new":
+      return order.status === OrderStatus.CREATED;
+    case "finished":
+      return order.status === OrderStatus.FINISHED;
+    case "cancelled":
+      return (
+        order.status === OrderStatus.CANCELLED ||
+        order.status === OrderStatus.CUSTOMER_REJECTED
+      );
+    case "processing":
+      if (order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION) return true;
+      if (order.status === OrderStatus.CANCELLED) return !!order.factory_id;
+      if (order.status !== OrderStatus.PROCESSING) return false;
+      if (order.factory_id) return true;
+      if (!isOnlyGoodsOrder(order)) return false;
+      return !order.order_items?.some(
+        (item) => item.goods_status === GoodsOrderItemStatus.CREATED
+      );
+    case "waiting_transport":
+      if (order.status !== OrderStatus.PROCESSING) return false;
+      if (order.factory_id) return false;
+      if (isOnlyGoodsOrder(order)) return false;
+      return !order.order_items?.some((item) => {
+        const status = item.service_status;
+        return (
+          status === ServiceOrderItemStatus.PICKING ||
+          status === ServiceOrderItemStatus.DELIVERING ||
+          status === ServiceOrderItemStatus.WASHING ||
+          status === ServiceOrderItemStatus.AT_FACTORY
+        );
+      });
+    case "waiting_return":
+      if (order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED) return true;
+      if (order.status === OrderStatus.CUSTOMER_REJECTED) {
+        return orderHasServiceItems(order);
+      }
+      if (order.status !== OrderStatus.PROCESSING) return false;
+      if (order.is_split_shipment) return true;
+      if (isOnlyGoodsOrder(order)) {
+        return !!order.order_items?.some(
+          (item) => item.goods_status === GoodsOrderItemStatus.CREATED
+        );
+      }
+      {
+        const serviceItems =
+          order.order_items?.filter(
+            (item) => item.product_type === ProductType.SERVICE
+          ) ?? [];
+        return (
+          serviceItems.length > 0 &&
+          serviceItems.every(
+            (item) => item.service_status === ServiceOrderItemStatus.DELIVERING
+          )
+        );
+      }
+    default:
+      return false;
+  }
+}
+
+function cardStatusForTab(
+  tab: OrderTab,
+  order: Order
+): OrderCardData["status"] | undefined {
+  if (tab === "processing") {
+    if (order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION) return "wait_confirm";
+    if (order.factory_id) return "factory";
+    return undefined;
+  }
+  if (tab === "finished") return "finished";
+  if (tab === "cancelled") return "cancelled";
+  if (tab === "waiting_transport") return "waiting_transport";
+  if (tab === "waiting_return") {
+    if (order.status === OrderStatus.CANCELLED) return "cancelled_waiting_return";
+    if (order.status === OrderStatus.CUSTOMER_REJECTED) {
+      return "customer_rejected_waiting_return";
+    }
+    return "waiting_return";
+  }
+  return undefined;
+}
 
 /** CUSTOMER_REJECTED with no SERVICE line items behaves like CANCELLED (no return flow). */
 function orderHasServiceItems(order: Order): boolean {
@@ -79,7 +185,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   onPromotionPress,
   refreshKey,
 }) => {
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 50;
   const [activeTab, setActiveTab] = useState<OrderTab>("new");
   const [searchText, setSearchText] = useState("");
   const [orders, setOrders] = useState<OrderCardData[]>([]);
@@ -116,14 +222,22 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     finished: 0,
     cancelled: 0,
   });
+  const [pageByTab, setPageByTab] = useState<Partial<Record<OrderTab, number>>>({});
+  const [moreByTab, setMoreByTab] = useState<Partial<Record<OrderTab, boolean>>>({});
   const [isCreatingBatch, setIsCreatingBatch] = useState(false);
   const [isPrintingReceipts, setIsPrintingReceipts] = useState(false);
   const [isCreatingTrip, setIsCreatingTrip] = useState(false);
 
   const tabCacheRef = React.useRef<Map<OrderTab, OrderCardData[]>>(new Map());
+  const orderTabRef = React.useRef<Map<string, OrderTab>>(new Map());
+  const visitedTabsRef = React.useRef<Set<OrderTab>>(new Set());
   const tabPageRef = React.useRef<Map<OrderTab, number>>(new Map());
+  const tabPage0IdsRef = React.useRef<Map<OrderTab, Set<string>>>(new Map());
   const tabHasMoreRef = React.useRef<Map<OrderTab, boolean>>(new Map());
   const loadMoreLockRef = React.useRef(false);
+  const activeTabRef = React.useRef(activeTab);
+  activeTabRef.current = activeTab;
+  const syncingRef = React.useRef(false);
 
   const mergeIntoCache = (
     tab: OrderTab,
@@ -133,9 +247,16 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     const prev = tabCacheRef.current.get(tab) || [];
 
     if (page === 0) {
-      // Refresh: replace tab list so orders that moved to another tab are removed.
-      tabCacheRef.current.set(tab, pageItems);
-      return pageItems;
+      // Replace the previous first page (moved or new orders) and keep later pages.
+      const incomingIds = new Set(pageItems.map((card) => card.id));
+      const previousFirstPage = tabPage0IdsRef.current.get(tab) ?? new Set<string>();
+      tabPage0IdsRef.current.set(tab, incomingIds);
+      const rest = prev.filter(
+        (card) => !incomingIds.has(card.id) && !previousFirstPage.has(card.id)
+      );
+      const merged = [...pageItems, ...rest];
+      tabCacheRef.current.set(tab, merged);
+      return merged;
     }
 
     const existingIds = new Set(prev.map((x) => x.id));
@@ -152,8 +273,11 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     page: number
   ) => {
     const prevTabCards = page === 0 ? tabCacheRef.current.get(tab) || [] : [];
-    const mergedOrders = mergeIntoCache(tab, cardDataList, page);
-    setOrders(mergedOrders);
+    const mergedOrders = sortWaitingConfirmFirst(
+      mergeIntoCache(tab, cardDataList, page)
+    );
+    tabCacheRef.current.set(tab, mergedOrders);
+    if (activeTabRef.current === tab) setOrders(mergedOrders);
 
     setOrderMap((prev) => {
       const next = new Map(prev);
@@ -166,14 +290,19 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             cards.forEach((c) => codesInOtherTabs.add(c.id));
           }
         });
+        const stillOnThisTab = new Set(mergedOrders.map((card) => card.id));
         prevTabCards.forEach((card) => {
-          if (!incomingCodes.has(card.id) && !codesInOtherTabs.has(card.id)) {
+          if (!stillOnThisTab.has(card.id) && !codesInOtherTabs.has(card.id)) {
             next.delete(card.id);
+            orderTabRef.current.delete(card.id);
           }
         });
       }
 
-      filteredOrders.forEach((order) => next.set(order.code, order));
+      filteredOrders.forEach((order) => {
+        next.set(order.code, order);
+        orderTabRef.current.set(order.code, tab);
+      });
       return next;
     });
 
@@ -276,7 +405,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
 
     try {
       const wtCached = tabCacheRef.current.get("waiting_transport")?.length ?? 0;
-      if (wtCached === 0) setLoading(true);
+      if (wtCached === 0 && activeTabRef.current === "waiting_transport") setLoading(true);
 
       // Use cached tracking items if available and requested, otherwise fetch
       const trackingItems = await fetchTrackingItems(!useCache);
@@ -447,7 +576,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       setBatches(new Map());
       setBatchTrackingItemIds(new Map());
     } finally {
-      setLoading(false);
+      if (activeTabRef.current === "waiting_transport") setLoading(false);
     }
   };
 
@@ -464,8 +593,8 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     try {
       if (page === 0) {
         const cachedLen = tabCacheRef.current.get(tab)?.length ?? 0;
-        if (cachedLen === 0) setLoading(true);
-      } else setLoadingMore(true);
+        if (cachedLen === 0 && activeTabRef.current === tab) setLoading(true);
+      } else if (activeTabRef.current === tab) setLoadingMore(true);
 
       // For waiting_return tab, fetch PROCESSING, CANCELLED, CUSTOMER_REJECTED, CUSTOMER_INCIDENTS_REJECTED
       if (tab === "waiting_return") {
@@ -673,7 +802,9 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         setBatches(new Map());
         setBatchTrackingItemIds(new Map());
         tabPageRef.current.set(tab, page);
-        tabHasMoreRef.current.set(tab, cardDataList.length >= PAGE_SIZE);
+        const hasMore = cardDataList.length >= PAGE_SIZE;
+        tabHasMoreRef.current.set(tab, hasMore);
+        setMoreByTab((prev) => (prev[tab] === hasMore ? prev : { ...prev, [tab]: hasMore }));
         return;
       }
 
@@ -1001,20 +1132,26 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         .filter((card): card is OrderCardData => card !== null);
 
       applyTabOrderResults(tab, cardDataList, filteredOrders, page);
-      setBatches(new Map()); // Clear batches for other tabs
-      setBatchTrackingItemIds(new Map()); // Clear batch tracking item IDs for other tabs
+      if (activeTabRef.current === tab && tab !== "waiting_transport") {
+        setBatches(new Map());
+        setBatchTrackingItemIds(new Map());
+      }
       tabPageRef.current.set(tab, page);
-      tabHasMoreRef.current.set(tab, cardDataList.length >= PAGE_SIZE);
+      const hasMore = cardDataList.length >= PAGE_SIZE;
+      tabHasMoreRef.current.set(tab, hasMore);
+      setMoreByTab((prev) => (prev[tab] === hasMore ? prev : { ...prev, [tab]: hasMore }));
     } catch (error) {
       console.error("Failed to fetch orders:", error);
       if (page === 0) {
         tabPageRef.current.delete(tab);
         tabHasMoreRef.current.delete(tab);
+        setMoreByTab((prev) => ({ ...prev, [tab]: false }));
       }
     } finally {
-      setLoading(false);
-      setLoadingMore(false);
-      setRefreshing(false);
+      if (activeTabRef.current === tab) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
       loadMoreLockRef.current = false;
     }
   };
@@ -1325,69 +1462,185 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     }
   };
 
-  useEffect(() => {
-    if (storeId) {
-      // Clear cache when storeId changes
-      setTrackingItemsCache(null);
-      tabCacheRef.current.clear();
-      tabPageRef.current.clear();
-      tabHasMoreRef.current.clear();
-      loadMoreLockRef.current = false;
-      setOrders([]);
-
-      // If on waiting_transport tab, fetch tracking items once and use for both counts and orders
-      if (activeTab === "waiting_transport") {
-        fetchTrackingItems(false).then(() => {
-          fetchAllOrdersCounts();
-          fetchTrackingItemsForBatch(true);
-        });
-      } else {
-        fetchAllOrdersCounts();
-        fetchOrdersForTab(activeTab, 0);
-      }
+  const refreshAllTabs = async () => {
+    if (!storeId || syncingRef.current) return;
+    syncingRef.current = true;
+    try {
+      await Promise.all([
+        fetchOrdersForTab("new", 0),
+        fetchOrdersForTab("processing", 0),
+        fetchOrdersForTab("waiting_transport", 0),
+        fetchOrdersForTab("waiting_return", 0),
+        fetchOrdersForTab("finished", 0),
+        fetchOrdersForTab("cancelled", 0),
+        fetchAllOrdersCounts(),
+      ]);
+      STORE_TABS.forEach((tab) => visitedTabsRef.current.add(tab));
+    } finally {
+      syncingRef.current = false;
     }
+  };
+  const refreshAllTabsRef = React.useRef(refreshAllTabs);
+  refreshAllTabsRef.current = refreshAllTabs;
+
+  useEffect(() => {
+    if (!storeId) return;
+    setTrackingItemsCache(null);
+    tabCacheRef.current.clear();
+    orderTabRef.current.clear();
+    visitedTabsRef.current.clear();
+    tabPageRef.current.clear();
+    tabPage0IdsRef.current.clear();
+    tabHasMoreRef.current.clear();
+    loadMoreLockRef.current = false;
+    setOrders([]);
+    setPageByTab({});
+    setMoreByTab({});
+    void refreshAllTabsRef.current();
   }, [storeId]);
 
   useEffect(() => {
-    if (storeId) {
-      // When switching tabs, show cache first (if any), then fetch only if needed
-      if (activeTab === "waiting_transport") {
-        fetchTrackingItemsForBatch(false);
-      } else {
-        const cached = tabCacheRef.current.get(activeTab);
-        if (cached && cached.length > 0) {
-          setOrders(cached);
-        } else {
-          fetchOrdersForTab(activeTab, 0);
-        }
-      }
-      // Clear selection when switching tabs
-      setSelectedOrders(new Set());
-      setSelectedBatches(new Set());
-    }
+    if (!storeId) return;
+    setSelectedOrders(new Set());
+    setSelectedBatches(new Set());
+    const cached = tabCacheRef.current.get(activeTab);
+    setOrders(cached ?? []);
+    setLoading(!cached);
   }, [activeTab]);
 
-  // Refresh when refreshKey changes (e.g., after process detail) — re-fetch page 0 and drop orders that left this tab
+  // Refresh when refreshKey changes (e.g., after process detail)
   useEffect(() => {
     if (storeId && refreshKey !== undefined && refreshKey > 0) {
-      if (activeTab === "waiting_transport") {
-        setTrackingItemsCache(null);
-      }
-      tabPageRef.current.set(activeTab, 0);
-      tabHasMoreRef.current.set(activeTab, true);
-
-      // Refresh orders and counts
-      if (activeTab === "waiting_transport") {
-        fetchTrackingItems(true).then(() => {
-          fetchAllOrdersCounts();
-          fetchTrackingItemsForBatch(true);
-        });
-      } else {
-        fetchAllOrdersCounts();
-        fetchOrdersForTab(activeTab, 0);
-      }
+      setTrackingItemsCache(null);
+      void refreshAllTabs();
     }
   }, [refreshKey]);
+
+  const orderMapRef = React.useRef(orderMap);
+  orderMapRef.current = orderMap;
+  const onOrderPressRef = React.useRef(onOrderPress);
+  onOrderPressRef.current = onOrderPress;
+  const ingestingOrderIds = React.useRef<Set<string>>(new Set());
+
+  const placeOrder = (patched: Order) => {
+    const code = patched.code;
+    const active = activeTabRef.current;
+    let visibleSomewhere = false;
+    const countDelta: Partial<Record<OrderTab, number>> = {};
+
+    STORE_TABS.forEach((tab) => {
+      const isActive = tab === active;
+      const list = tabCacheRef.current.get(tab) ?? [];
+      const has = list.some((card) => card.id === code);
+      const belongs = orderMatchesStoreTab(tab, patched);
+      if (belongs) visibleSomewhere = true;
+      if (!belongs && !has) return;
+
+      let nextList: OrderCardData[];
+      if (!belongs) {
+        nextList = list.filter((card) => card.id !== code);
+      } else {
+        const filterGoodsOnly =
+          tab === "waiting_return" &&
+          !!patched.is_split_shipment &&
+          !areAllServicesDone(patched);
+        const card = mapOrderToCardData(
+          patched,
+          onOrderPressRef.current,
+          cardStatusForTab(tab, patched),
+          filterGoodsOnly
+        );
+        if (!card) {
+          nextList = list.filter((item) => item.id !== code);
+        } else {
+          nextList = sortWaitingConfirmFirst(
+            has
+              ? list.map((item) => (item.id === code ? card : item))
+              : [card, ...list]
+          );
+        }
+      }
+
+      tabCacheRef.current.set(tab, nextList);
+      const stillThere = nextList.some((card) => card.id === code);
+      if (has && !stillThere) countDelta[tab] = (countDelta[tab] ?? 0) - 1;
+      if (!has && stillThere) countDelta[tab] = (countDelta[tab] ?? 0) + 1;
+      const firstPageIds = new Set(tabPage0IdsRef.current.get(tab) ?? []);
+      if (!belongs) firstPageIds.delete(code);
+      else if (!has) firstPageIds.add(code);
+      tabPage0IdsRef.current.set(tab, firstPageIds);
+      if (isActive) setOrders(nextList);
+    });
+
+    setOrderMap((prev) => {
+      const next = new Map(prev);
+      if (visibleSomewhere || STORE_TABS.some((tab) => orderMatchesStoreTab(tab, patched))) {
+        next.set(code, patched);
+        const home =
+          orderTabRef.current.get(code) ??
+          STORE_TABS.find((tab) => orderMatchesStoreTab(tab, patched));
+        if (home) orderTabRef.current.set(code, home);
+      } else {
+        next.delete(code);
+        orderTabRef.current.delete(code);
+      }
+      return next;
+    });
+    if (STORE_TABS.some((tab) => countDelta[tab])) {
+      setTabCounts((prev) => {
+        const next = { ...prev };
+        STORE_TABS.forEach((tab) => {
+          const delta = countDelta[tab];
+          if (!delta) return;
+          next[tab] = Math.max(0, next[tab] + delta);
+        });
+        return next;
+      });
+    }
+  };
+
+  useOrderStream({
+    onOrderUpdated: (event) => {
+      if (!storeId) return;
+      if (event.hub_id && event.hub_id !== storeId) return;
+
+      let existing: Order | undefined;
+      orderMapRef.current.forEach((order) => {
+        if (order.id === event.order_id) existing = order;
+      });
+
+      if (!existing) {
+        if (ingestingOrderIds.current.has(event.order_id)) return;
+        ingestingOrderIds.current.add(event.order_id);
+        void orderService
+          .searchStoreOrders(
+            {
+              code: event.order_code,
+              hub_id: storeId,
+              fetch_order_items: true,
+              fetch_incidents: true,
+            },
+            { page: 0, size: 1 }
+          )
+          .then((response) => {
+            const order =
+              response.data?.find((item) => item.id === event.order_id) ??
+              response.data?.[0];
+            if (!order) return;
+            placeOrder(applyOrderStreamPatch(order, event));
+          })
+          .catch(() => {
+            /* the next manual refresh will load the order */
+          })
+          .finally(() => {
+            ingestingOrderIds.current.delete(event.order_id);
+          });
+        return;
+      }
+
+      placeOrder(applyOrderStreamPatch(existing, event));
+    },
+  });
 
   const handleOrderSelect = (orderId: string, selected: boolean) => {
     setSelectedOrders((prev) => {
@@ -1591,7 +1844,8 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       trackingItemIds.forEach((trackingItemId) => {
         logisticTripItems.push({
           type: LogisticTripItemType.BAG_INBOUND,
-          service_item_tracking_id: trackingItemId, // Use the actual tracking item ID
+          service_item_tracking_id: trackingItemId,
+          container_code: barcode,
         });
       });
     });
@@ -1680,44 +1934,51 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const handleRefresh = async () => {
     if (!storeId) return;
     setRefreshing(true);
-
-    tabPageRef.current.set(activeTab, 0);
-    tabHasMoreRef.current.set(activeTab, true);
-
-    await fetchAllOrdersCounts();
-    await fetchOrdersForTab(activeTab, 0);
-  };
-
-  const loadMore = async () => {
-    if (!storeId) return;
-    if (activeTab === "waiting_transport") return;
-    if (loading || loadingMore || refreshing) return;
-    if (loadMoreLockRef.current) return;
-
-    const hasMore = tabHasMoreRef.current.get(activeTab);
-    if (hasMore === false) return;
-
-    const currentPage = tabPageRef.current.get(activeTab) || 0;
-    const nextPage = currentPage + 1;
-
-    loadMoreLockRef.current = true;
-    await fetchOrdersForTab(activeTab, nextPage);
-  };
-
-  const handleScroll = (event: any) => {
-    const { layoutMeasurement, contentOffset, contentSize } =
-      event?.nativeEvent || {};
-    if (!layoutMeasurement || !contentOffset || !contentSize) return;
-
-    const paddingToBottom = 120;
-    const isNearBottom =
-      layoutMeasurement.height + contentOffset.y >=
-      contentSize.height - paddingToBottom;
-
-    if (isNearBottom) {
-      loadMore();
+    try {
+      syncingRef.current = false;
+      await refreshAllTabs();
+    } finally {
+      setRefreshing(false);
     }
   };
+
+  const ordersListRef = React.useRef<ScrollView>(null);
+
+  const goToPage = async (index: number) => {
+    if (!storeId || loadingMore) return;
+    const next = Math.max(0, index);
+    setPageByTab((prev) => ({ ...prev, [activeTab]: next }));
+    ordersListRef.current?.scrollTo({ y: 0, animated: false });
+
+    const needed = (next + 1) * PAGE_SIZE;
+    if ((tabCacheRef.current.get(activeTab)?.length ?? 0) >= needed) return;
+    if (activeTab === "waiting_transport") return;
+    if (tabHasMoreRef.current.get(activeTab) === false) return;
+
+    let apiPage = tabPageRef.current.get(activeTab) || 0;
+    while ((tabCacheRef.current.get(activeTab)?.length ?? 0) < needed) {
+      if (tabHasMoreRef.current.get(activeTab) === false) break;
+      const before = tabCacheRef.current.get(activeTab)?.length ?? 0;
+      apiPage += 1;
+      loadMoreLockRef.current = true;
+      await fetchOrdersForTab(activeTab, apiPage);
+      const after = tabCacheRef.current.get(activeTab)?.length ?? 0;
+      if (after <= before) break;
+    }
+  };
+
+  const pageIndex = pageByTab[activeTab] ?? 0;
+  const knownCount = Math.max(tabCounts[activeTab] || 0, orders.length);
+  let totalPages = Math.max(1, Math.ceil(knownCount / PAGE_SIZE));
+  if (moreByTab[activeTab] && orders.length >= totalPages * PAGE_SIZE) {
+    totalPages += 1;
+  }
+  const safePage = Math.min(pageIndex, totalPages - 1);
+  const pageOrders = orders.slice(
+    safePage * PAGE_SIZE,
+    safePage * PAGE_SIZE + PAGE_SIZE
+  );
+  const pageOrderIds = new Set(pageOrders.map((card) => card.id));
 
   return (
     <View style={styles.container}>
@@ -1734,11 +1995,46 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         />
       </View>
 
+      {totalPages > 1 && (
+        <View style={styles.paginationRow}>
+          <TouchableOpacity
+            style={[styles.pageArrow, safePage === 0 && styles.pageArrowDisabled]}
+            onPress={() => void goToPage(safePage - 1)}
+            disabled={safePage === 0 || loadingMore}
+            activeOpacity={0.7}
+          >
+            <FontAwesome5
+              name="chevron-left"
+              size={14}
+              color={safePage === 0 ? "#9CA3AF" : "#111827"}
+            />
+          </TouchableOpacity>
+          <Text style={styles.pageText}>
+            Trang {safePage + 1}/{totalPages}
+          </Text>
+          <TouchableOpacity
+            style={[
+              styles.pageArrow,
+              safePage >= totalPages - 1 && styles.pageArrowDisabled,
+            ]}
+            onPress={() => void goToPage(safePage + 1)}
+            disabled={safePage >= totalPages - 1 || loadingMore}
+            activeOpacity={0.7}
+          >
+            <FontAwesome5
+              name="chevron-right"
+              size={14}
+              color={safePage >= totalPages - 1 ? "#9CA3AF" : "#111827"}
+            />
+          </TouchableOpacity>
+          {loadingMore && <ActivityIndicator size="small" color="#2563EB" />}
+        </View>
+      )}
+
       <ScrollView
+        ref={ordersListRef}
         style={styles.ordersList}
         showsVerticalScrollIndicator={false}
-        onScroll={handleScroll}
-        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
         }
@@ -1782,7 +2078,11 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
               {/* Batch Groups for waiting_transport tab */}
               {activeTab === "waiting_transport" && batches.size > 0 && (
                 <>
-                  {Array.from(batches.entries()).map(
+                  {Array.from(batches.entries())
+                    .filter(([, orderCodes]) =>
+                      orderCodes.some((code) => pageOrderIds.has(code))
+                    )
+                    .map(
                     ([barcode, orderCodes]) => (
                       <BatchGroupCard
                         key={barcode}
@@ -1920,7 +2220,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
               )}
 
               {/* Regular Orders (only show if not in batches for waiting_transport tab) */}
-              {orders
+              {pageOrders
                 .filter((orderCard) => {
                   // For waiting_transport tab, hide orders that are in batches
                   if (activeTab === "waiting_transport") {
@@ -2139,5 +2439,30 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 14,
     color: "#9CA3AF",
+  },
+  paginationRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginHorizontal: 16,
+    marginBottom: 8,
+    gap: 10,
+  },
+  pageArrow: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E5E7EB",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  pageArrowDisabled: {
+    backgroundColor: "#F3F4F6",
+  },
+  pageText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#111827",
   },
 });

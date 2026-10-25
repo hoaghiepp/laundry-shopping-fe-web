@@ -28,6 +28,8 @@ export interface OrderCheckoutReq {
   customer_package_id?: UUID;
   is_split_shipment: boolean;
   is_need_shipment: boolean;
+  /** Same-day / dịch vụ trong ngày. Required (@NotNull). Default UX: false. */
+  same_day_service: boolean;
   wallet_payment_amount?: string | number; // BigDecimal: send number or "50000"
 }
 
@@ -37,6 +39,7 @@ export interface SearchOrderCustomerRequest {
   hub_id?: string;
   factory_id?: string;
   status?: OrderStatus | string;
+  payment_status?: PaymentStatus | string;
   from_date?: string;
   to_date?: string;
   fetch_order_items?: boolean;
@@ -49,6 +52,7 @@ export interface SearchOrderStoreRequest {
   customer_id?: string;
   factory_id?: string;
   status?: OrderStatus | string;
+  payment_status?: PaymentStatus | string;
   from_date?: string;
   to_date?: string;
   fetch_order_items?: boolean;
@@ -86,6 +90,10 @@ export interface Order {
   service_additional_fee?: number;
   additional_fee?: number;
   final_total: number;
+  /** Whether same-day service was selected at checkout */
+  same_day_service?: boolean;
+  /** Extra fee for same-day; already included in final_total */
+  same_day_service_fee?: number;
   note?: string;
   status: OrderStatus;
   payment_status: PaymentStatus;
@@ -337,6 +345,50 @@ export const orderService = {
     } catch (error) {
       console.error("Error getting staff order by ID:", error);
       throw new Error(extractApiErrorMessage(error, "Get staff order failed"));
+    }
+  },
+
+  /** Submit a service bill. Allowed only while payment_status is UNPAID. */
+  pay: async (orderId: string): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("User token not found");
+    }
+    try {
+      const response = await userAxios.post(
+        `${API_BASE_URL}/v1/customer/orders/${orderId}/pay`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(extractApiErrorMessage(error, "Submit payment failed"));
+    }
+  },
+
+  /** Staff of the order hub, or super admin, confirms cash was received. */
+  confirmPayment: async (orderId: string): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("Store token not found");
+    }
+    try {
+      const response = await userAxios.put(
+        `${API_BASE_URL}/v1/staff/orders/${orderId}/confirm-payment`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(extractApiErrorMessage(error, "Confirm payment failed"));
     }
   },
 

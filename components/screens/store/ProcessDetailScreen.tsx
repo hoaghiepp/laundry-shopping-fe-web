@@ -6,6 +6,7 @@ import {
   GoodsOrderItemStatus,
   IncidentStatus,
   OrderStatus,
+  PaymentStatus,
   ProductType,
   ServiceOrderItemStatus,
 } from "@/constants/enum";
@@ -13,6 +14,7 @@ import { storeMainContentPaddingTop } from "@/constants/storeWebLayout";
 import { compatAlert } from "@/lib/compatAlert";
 import { AddressLocation, goshipService } from "@/services/api/goshipService";
 import { logisticService } from "@/services/api/logisticService";
+import { useOrderStream } from "@/hooks/useOrderStream";
 import { Order, orderService } from "@/services/api/orderService";
 import { storeService } from "@/services/api/storeService";
 import { formatCurrencyVND } from "@/utils/format";
@@ -68,6 +70,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   const [processingIncidents, setProcessingIncidents] = useState<Set<string>>(
     new Set(),
   );
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
 
   const [retailItems, setRetailItems] = useState<any[]>([]);
   const [serviceItems, setServiceItems] = useState<any[]>([]);
@@ -385,6 +388,21 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     setOrderInfo(initialOrder);
     fetchOrderDetails();
   }, [initialOrder.code]);
+
+  useOrderStream({
+    onReady: () => {
+      fetchOrderDetails();
+    },
+    onOrderUpdated: (event) => {
+      if (
+        event.order_id !== initialOrder.id &&
+        event.order_code !== initialOrder.code
+      ) {
+        return;
+      }
+      fetchOrderDetails();
+    },
+  });
 
   useEffect(() => {
     const orderCode = orderInfo?.code;
@@ -1188,6 +1206,21 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                 {getOrderStatusText()}
               </Text>
             </View>
+            {orderInfo?.payment_status === PaymentStatus.WAITING_CONFIRM && (
+              <View style={styles.paymentWaitingBadge}>
+                <Text style={styles.paymentWaitingBadgeText}>Chờ xác nhận tiền</Text>
+              </View>
+            )}
+            {orderInfo?.payment_status === PaymentStatus.PAID && (
+              <View style={styles.paymentPaidBadge}>
+                <Text style={styles.paymentPaidBadgeText}>Đã thanh toán</Text>
+              </View>
+            )}
+            {orderInfo?.payment_status === PaymentStatus.UNPAID && (
+              <View style={styles.paymentUnpaidBadge}>
+                <Text style={styles.paymentUnpaidBadgeText}>Chưa thanh toán</Text>
+              </View>
+            )}
             <View style={styles.splitBadge}>
               <FontAwesome5
                 name="random"
@@ -1211,7 +1244,47 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             onCallPress={handleCallCustomer}
           />
 
-          {/* Header no longer shows global stepper; each section has its own stepper below */}
+          {orderInfo?.payment_status === PaymentStatus.WAITING_CONFIRM && (
+            <TouchableOpacity
+              style={[
+                styles.confirmPaymentButton,
+                confirmingPayment && styles.confirmPaymentButtonDisabled,
+              ]}
+              disabled={confirmingPayment}
+              activeOpacity={0.8}
+              onPress={() => {
+                compatAlert(
+                  "Xác nhận đã nhận tiền",
+                  "Xác nhận cửa hàng đã nhận đủ tiền mặt của đơn này?",
+                  [
+                    { text: "Hủy", style: "cancel" },
+                    {
+                      text: "Xác nhận",
+                      onPress: async () => {
+                        try {
+                          setConfirmingPayment(true);
+                          await orderService.confirmPayment(orderInfo.id);
+                          await fetchOrderDetails();
+                          compatAlert("Thành công", "Đã xác nhận đã nhận tiền.");
+                        } catch (error: any) {
+                          compatAlert(
+                            "Lỗi",
+                            error?.message || "Không thể xác nhận thanh toán"
+                          );
+                        } finally {
+                          setConfirmingPayment(false);
+                        }
+                      },
+                    },
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.confirmPaymentButtonText}>
+                {confirmingPayment ? "Đang xác nhận..." : "Xác nhận đã nhận tiền"}
+              </Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {!!(orderInfo as any)?.incidents?.length && (
@@ -2326,6 +2399,60 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "bold",
     color: "#1E40AF",
+  },
+  paymentWaitingBadge: {
+    backgroundColor: "#FEF3C7",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  paymentWaitingBadgeText: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: "#92400E",
+  },
+  paymentPaidBadge: {
+    backgroundColor: "#D1FAE5",
+    borderWidth: 1,
+    borderColor: "#6EE7B7",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  paymentPaidBadgeText: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: "#047857",
+  },
+  paymentUnpaidBadge: {
+    backgroundColor: "#FEE2E2",
+    borderWidth: 1,
+    borderColor: "#FECACA",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  paymentUnpaidBadgeText: {
+    fontSize: 10,
+    fontWeight: "bold",
+    color: "#B91C1C",
+  },
+  confirmPaymentButton: {
+    marginTop: 12,
+    backgroundColor: "#059669",
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  confirmPaymentButtonDisabled: {
+    opacity: 0.6,
+  },
+  confirmPaymentButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
   },
   splitBadge: {
     backgroundColor: "#F3E8FF",
