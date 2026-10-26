@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   Image,
   Modal,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -118,7 +119,7 @@ export const CarrierSelectionDialog: React.FC<CarrierSelectionDialogProps> = ({
       if (ratesData && Array.isArray(ratesData) && ratesData.length > 0) {
         setRatesData(ratesData);
         const carriersList: Carrier[] = ratesData.map((rate: any, index: number) => ({
-          id: rate.carrier_id || rate.id || rate.carrier?.id || `carrier-${index}`,
+          id: String(rate.id || rate.rate || rate.rate_id || `carrier-${index}`),
           name: rate.carrier_name || rate.name || rate.carrier?.name || `Đơn vị vận chuyển ${index + 1}`,
           description: rate.service_name || rate.service?.name || rate.description || rate.expected,
           estimatedTime: rate.estimated_delivery_time || rate.estimated_time || rate.delivery_time || rate.expected,
@@ -241,10 +242,11 @@ export const CarrierSelectionDialog: React.FC<CarrierSelectionDialogProps> = ({
     try {
       // Find the selected rate data
       // console.log('ratesData', ratesData);
-      const selectedRate = ratesData.find((rate: any) => {
-        const rateId = rate.id;
-        return rateId === selectedCarrierId;
-      });
+      const selectedRate = ratesData.find(
+        (rate: any, index: number) =>
+          String(rate.id || rate.rate || rate.rate_id || `carrier-${index}`) ===
+          selectedCarrierId
+      );
 
       // Prepare parcel data
       const parcelData = {
@@ -280,12 +282,14 @@ export const CarrierSelectionDialog: React.FC<CarrierSelectionDialogProps> = ({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <TouchableOpacity
-        style={styles.dialogOverlay}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <View style={styles.dialogContent} onStartShouldSetResponder={() => true}>
+      <View style={styles.dialogOverlay}>
+        <Pressable
+          style={styles.backdrop}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel="Đóng"
+        />
+        <View style={styles.dialogContent}>
           <View style={styles.dialogHeader}>
             <Text style={styles.dialogTitle}>Chọn đơn vị vận chuyển</Text>
             <TouchableOpacity onPress={onClose} activeOpacity={0.7}>
@@ -608,7 +612,7 @@ export const CarrierSelectionDialog: React.FC<CarrierSelectionDialogProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </TouchableOpacity>
+      </View>
     </Modal>
   );
 };
@@ -620,7 +624,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
   dialogContent: {
+    zIndex: 1,
     backgroundColor: '#FFFFFF',
     borderRadius: 20,
     width: '90%',

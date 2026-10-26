@@ -43,12 +43,6 @@ interface CustomerPeriodStat {
   profile?: StoreCustomer;
 }
 
-interface DailyCustomerStat {
-  dateKey: string;
-  label: string;
-  customers: CustomerPeriodStat[];
-}
-
 interface CustomerScreenProps {
   storeId?: string;
   onSelectCustomer: (
@@ -72,25 +66,12 @@ const fromInputDate = (value: string) => {
   return new Date(y, m - 1, day);
 };
 
-const eachDayInRange = (from: Date, to: Date) => {
-  const start = new Date(from);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(to);
-  end.setHours(0, 0, 0, 0);
-  const days: Date[] = [];
-  for (let d = start; d <= end; d = new Date(d.getTime() + 86400000))
-    days.push(new Date(d));
-  return days;
-};
-
 const formatDate = (date: Date) =>
   date.toLocaleDateString("vi-VN", {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
   });
-
-const isSameDay = (a: Date, b: Date) => toDateKey(a) === toDateKey(b);
 
 type CustAcc = {
   orderIds: Set<string>;
@@ -168,15 +149,12 @@ export const CustomerScreen: React.FC<CustomerScreenProps> = ({
   const [pickerMode, setPickerMode] = useState<DatePickerMode>(null);
   const [loading, setLoading] = useState(false);
   const [customerStats, setCustomerStats] = useState<CustomerPeriodStat[]>([]);
-  const [dailyStats, setDailyStats] = useState<DailyCustomerStat[]>([]);
-  const [expandedDays, setExpandedDays] = useState<Record<string, boolean>>({});
   const [totalOrders, setTotalOrders] = useState(0);
   const [totalRevenue, setTotalRevenue] = useState(0);
 
   const fetchStats = useCallback(async () => {
     if (!storeId) {
       setCustomerStats([]);
-      setDailyStats([]);
       setTotalOrders(0);
       setTotalRevenue(0);
       return;
@@ -185,33 +163,33 @@ export const CustomerScreen: React.FC<CustomerScreenProps> = ({
     from.setHours(0, 0, 0, 0);
     const to = new Date(toDate);
     to.setHours(23, 59, 59, 999);
-    const multiDay = !isSameDay(fromDate, toDate);
-    if (multiDay && eachDayInRange(fromDate, toDate).length > 31) {
-      compatAlert("Lỗi", "Vui lòng chọn khoảng thời gian tối đa 31 ngày");
-      return;
-    }
     try {
       setLoading(true);
-      const response = await orderService.searchStoreOrders(
-        {
-          hub_id: storeId,
-          from_date: from.toISOString(),
-          to_date: to.toISOString(),
-          fetch_order_items: true,
-        },
-        { page: 0, size: 1000 },
-      );
-      const orders: Order[] = response.data || [];
+      const PAGE_SIZE = 1000;
+      const orders: Order[] = [];
+      for (let page = 0; page < 200; page++) {
+        const response = await orderService.searchStoreOrders(
+          {
+            hub_id: storeId,
+            from_date: from.toISOString(),
+            to_date: to.toISOString(),
+            fetch_order_items: true,
+          },
+          { page, size: PAGE_SIZE },
+        );
+        const batch = response.data || [];
+        orders.push(...batch);
+        if (batch.length !== PAGE_SIZE) break;
+      }
       setTotalOrders(orders.length);
 
       const periodMap = new Map<string, CustAcc>();
-      const dayMap = new Map<string, Map<string, CustAcc>>();
       let revenueSum = 0;
       const customerIds = new Set<string>();
 
-      const ensure = (map: Map<string, CustAcc>, id: string, order: Order) => {
-        if (!map.has(id)) {
-          map.set(id, {
+      const ensure = (id: string, order: Order) => {
+        if (!periodMap.has(id)) {
+          periodMap.set(id, {
             orderIds: new Set(),
             qty: 0,
             revenue: 0,
@@ -219,20 +197,15 @@ export const CustomerScreen: React.FC<CustomerScreenProps> = ({
             phone: order.shipping_phone_number_snapshot || "",
           });
         }
-        return map.get(id)!;
+        return periodMap.get(id)!;
       };
 
       for (const order of orders) {
         const cid = order.customer_id;
         if (!cid) continue;
         customerIds.add(cid);
-        const dateKey = toDateKey(new Date(order.created_date));
-        if (!dayMap.has(dateKey)) dayMap.set(dateKey, new Map());
-        const dayCustomers = dayMap.get(dateKey)!;
-        const periodAcc = ensure(periodMap, cid, order);
-        const dayAcc = ensure(dayCustomers, cid, order);
+        const periodAcc = ensure(cid, order);
         periodAcc.orderIds.add(order.id);
-        dayAcc.orderIds.add(order.id);
 
         for (const item of order.order_items || []) {
           const ptype = String(
@@ -247,39 +220,19 @@ export const CustomerScreen: React.FC<CustomerScreenProps> = ({
           revenueSum += income;
           periodAcc.qty += qty;
           periodAcc.revenue += income;
-          dayAcc.qty += qty;
-          dayAcc.revenue += income;
         }
       }
 
       setTotalRevenue(revenueSum);
       const profiles = await loadCustomerProfiles(storeId, customerIds);
-      const toRows = (map: Map<string, CustAcc>) =>
-        [...map.entries()]
+      setCustomerStats(
+        [...periodMap.entries()]
           .map(([id, acc]) => toCustomerRow(id, acc, profiles.get(id)))
           .filter(
             (r) =>
               r.orderCount > 0 || r.totalQuantity > 0 || r.totalRevenue > 0,
           )
-          .sort((a, b) => b.totalRevenue - a.totalRevenue);
-
-      setCustomerStats(toRows(periodMap));
-      setDailyStats(
-        multiDay
-          ? eachDayInRange(fromDate, toDate).map((d) => {
-              const key = toDateKey(d);
-              const map = dayMap.get(key) ?? new Map();
-              return {
-                dateKey: key,
-                label: d.toLocaleDateString("vi-VN", {
-                  weekday: "short",
-                  day: "2-digit",
-                  month: "2-digit",
-                }),
-                customers: toRows(map),
-              };
-            })
-          : [],
+          .sort((a, b) => b.totalRevenue - a.totalRevenue),
       );
     } catch (e: any) {
       compatAlert("Lỗi", e.message || "Không thể tải thống kê khách hàng");
@@ -391,38 +344,8 @@ export const CustomerScreen: React.FC<CustomerScreenProps> = ({
           color="#2563EB"
           style={{ marginTop: 24 }}
         />
-      ) : isSameDay(fromDate, toDate) ? (
-        customerList(customerStats)
       ) : (
-        dailyStats.map((day) => (
-          <View key={day.dateKey} style={styles.dayCard}>
-            <TouchableOpacity
-              style={styles.dayHead}
-              onPress={() =>
-                setExpandedDays((p) => ({
-                  ...p,
-                  [day.dateKey]: !p[day.dateKey],
-                }))
-              }
-            >
-              <View>
-                <Text style={styles.dayTitle}>{day.label}</Text>
-                <Text style={styles.dayMeta}>
-                  {day.customers.length} khách ·{" "}
-                  {formatCurrencyVND(
-                    day.customers.reduce((s, c) => s + c.totalRevenue, 0),
-                  )}
-                </Text>
-              </View>
-              <FontAwesome5
-                name={expandedDays[day.dateKey] ? "chevron-up" : "chevron-down"}
-                size={12}
-                color="#6B7280"
-              />
-            </TouchableOpacity>
-            {expandedDays[day.dateKey] ? customerList(day.customers) : null}
-          </View>
-        ))
+        customerList(customerStats)
       )}
     </>
   );
@@ -687,22 +610,6 @@ const styles = StyleSheet.create({
   customerMeta: { fontSize: 12, color: "#6B7280" },
   customerRight: { alignItems: "flex-end", gap: 6 },
   customerRevenue: { fontSize: 13, fontWeight: "800", color: "#16a34a" },
-  dayCard: {
-    backgroundColor: "#fff",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    overflow: "hidden",
-    paddingBottom: 8,
-  },
-  dayHead: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    padding: 14,
-  },
-  dayTitle: { fontWeight: "700", fontSize: 14 },
-  dayMeta: { fontSize: 12, color: "#6B7280", marginTop: 2 },
   emptyBlock: { alignItems: "center", paddingVertical: 32, gap: 8 },
   emptyText: { color: "#9CA3AF" },
 });

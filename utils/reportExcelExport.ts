@@ -49,6 +49,8 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
 const PAYMENT_STATUS_LABELS: Record<string, string> = {
   [PaymentStatus.UNPAID]: 'Chưa thanh toán',
   [PaymentStatus.WAITING_CONFIRM]: 'Chờ xác nhận tiền',
+  [PaymentStatus.WAITING_CUSTOMER_CONFIRM]: 'Chờ khách xác nhận',
+  [PaymentStatus.WAITING_STORE_CONFIRM]: 'Chờ xác nhận tiền',
   [PaymentStatus.PARTIAL_PAID]: 'Thanh toán một phần',
   [PaymentStatus.PAID]: 'Đã thanh toán',
   [PaymentStatus.REFUNDED]: 'Đã hoàn tiền',

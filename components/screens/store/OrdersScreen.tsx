@@ -1,7 +1,6 @@
 import { PromotionBanner } from "@/components/home/PromotionBanner";
 import { useOrderStream } from "@/hooks/useOrderStream";
 import {
-    BatchGroupCard,
     FactorySelectionDialog,
     FloatingActionButtons,
     OrderTab,
@@ -11,6 +10,8 @@ import {
     mapOrderStatusToTab,
     mapOrderToCardData
 } from "@/components/orders";
+import { loadTransportOrders } from "@/components/orders/loadTransportOrders";
+import { WaitingTransportPanel } from "@/components/orders/WaitingTransportPanel";
 import { OrderCardData, OrderCardStore } from "@/components/store/OrderCard";
 import { LoadingScreen } from "@/components/ui/LoadingScreen";
 import {
@@ -18,6 +19,7 @@ import {
     IncidentStatus,
     LogisticTripItemType,
     OrderStatus,
+    PaymentStatus,
     ProductType,
     ServiceOrderItemStatus,
     StoreType,
@@ -40,6 +42,7 @@ import {
 } from "@/services/api/logisticService";
 import { applyOrderStreamPatch } from "@/services/api/orderStream";
 import { Order, orderService } from "@/services/api/orderService";
+import { isStorePaymentConfirm } from "@/components/orders/utils/orderUtils";
 import { StoreListItem, storeService } from "@/services/api/storeService";
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
@@ -54,6 +57,37 @@ import {
 } from "react-native";
 
 const WAITING_CONFIRM_LABEL = "Chờ xác nhận tiền";
+
+async function searchStoreCashToConfirm(
+  storeId: string,
+  size: number
+): Promise<Order[]> {
+  const [storeConfirm, legacyConfirm] = await Promise.all([
+    orderService.searchStoreOrders(
+      {
+        hub_id: storeId,
+        payment_status: PaymentStatus.WAITING_STORE_CONFIRM,
+        fetch_order_items: true,
+        fetch_incidents: true,
+      },
+      { page: 0, size, sort: "createdDate,desc" }
+    ),
+    orderService.searchStoreOrders(
+      {
+        hub_id: storeId,
+        payment_status: PaymentStatus.WAITING_CONFIRM,
+        fetch_order_items: true,
+        fetch_incidents: true,
+      },
+      { page: 0, size, sort: "createdDate,desc" }
+    ),
+  ]);
+  const byId = new Map<string, Order>();
+  for (const order of [...(storeConfirm.data ?? []), ...(legacyConfirm.data ?? [])]) {
+    byId.set(order.id, order);
+  }
+  return Array.from(byId.values());
+}
 
 function sortWaitingConfirmFirst(cards: OrderCardData[]): OrderCardData[] {
   return [...cards].sort((a, b) => {
@@ -76,7 +110,13 @@ const STORE_TABS: OrderTab[] = [
 function orderMatchesStoreTab(tab: OrderTab, order: Order): boolean {
   switch (tab) {
     case "new":
-      return order.status === OrderStatus.CREATED;
+      return (
+        order.status === OrderStatus.CREATED ||
+        (isStorePaymentConfirm(order.payment_status) &&
+          order.status !== OrderStatus.FINISHED &&
+          order.status !== OrderStatus.CANCELLED &&
+          order.status !== OrderStatus.CUSTOMER_REJECTED)
+      );
     case "finished":
       return order.status === OrderStatus.FINISHED;
     case "cancelled":
@@ -140,7 +180,12 @@ function cardStatusForTab(
   order: Order
 ): OrderCardData["status"] | undefined {
   if (tab === "processing") {
-    if (order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION) return "wait_confirm";
+    if (
+      order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION &&
+      order.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM
+    ) {
+      return "wait_confirm";
+    }
     if (order.factory_id) return "factory";
     return undefined;
   }
@@ -584,11 +629,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
   const fetchOrdersForTab = async (tab: OrderTab, page = 0) => {
     if (!storeId) return;
 
-    // For waiting_transport tab, use tracking items (don't use cache here, fetch fresh)
-    if (tab === "waiting_transport") {
-      await fetchTrackingItemsForBatch(false);
-      return;
-    }
+    if (tab === "waiting_transport") return;
 
     try {
       if (page === 0) {
@@ -843,8 +884,15 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       let filteredOrders = response.data;
 
       if (tab === "new") {
-        // For "new" tab, include CREATED, CONFIRMED, AT_HUB
-        filteredOrders = response.data.filter((order) => true);
+        const cashToConfirm =
+          page === 0 ? await searchStoreCashToConfirm(storeId, PAGE_SIZE) : [];
+        const byId = new Map<string, Order>();
+        for (const order of [...cashToConfirm, ...response.data]) {
+          byId.set(order.id, order);
+        }
+        filteredOrders = Array.from(byId.values()).filter((order) =>
+          orderMatchesStoreTab("new", order)
+        );
       } else if (tab === "processing") {
         // "processing" now includes:
         // - Normal processing (goods-only, excluding waiting_transport)
@@ -1115,7 +1163,10 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       const cardDataList = filteredOrders
         .map((order) => {
           if (tab === "processing") {
-            if (order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION) {
+            if (
+              order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION &&
+              order.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM
+            ) {
               return mapOrderToCardData(order, onOrderPress, "wait_confirm");
             }
             if (order.factory_id && order.factory_id !== "") {
@@ -1132,7 +1183,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         .filter((card): card is OrderCardData => card !== null);
 
       applyTabOrderResults(tab, cardDataList, filteredOrders, page);
-      if (activeTabRef.current === tab && tab !== "waiting_transport") {
+      if (activeTabRef.current === tab) {
         setBatches(new Map());
         setBatchTrackingItemIds(new Map());
       }
@@ -1170,101 +1221,11 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         cancelled: 0,
       };
 
-      // For waiting_transport, we need to count orders that match the same filtering logic
-      // as fetchTrackingItemsForBatch: PROCESSING orders with services, not delivering, not in trips
+      let waitingOrderIds = new Set<string>();
       try {
-        // Fetch tracking items to get batches info (this will populate the cache)
-        const trackingItems = await fetchTrackingItems(false);
-
-        // Fetch batches that are already in trips (pass tracking items directly to avoid cache timing issues)
-        const barcodesInTrips = await fetchBatchesInTrips(trackingItems);
-
-        // Group tracking items by barcode to identify orders in batches
-        const batchMap = new Map<string, string[]>(); // barcode -> order IDs
-        const allBatchesMap = new Map<string, string[]>(); // barcode -> order IDs (all batches)
-        const orderIdToCodeMap = new Map<string, string>(); // order_id -> order_code
-
-        // First, fetch PROCESSING orders to map order_id to order_code
-        const processingOrdersResponse = await orderService.searchStoreOrders(
-          {
-            hub_id: storeId,
-            status: OrderStatus.PROCESSING,
-            fetch_order_items: true,
-          },
-          { page: 0, size: 1000 }
-        );
-
-        processingOrdersResponse.data.forEach((order) => {
-          orderIdToCodeMap.set(order.id, order.code);
-        });
-
-        // Group tracking items by barcode
-        if (trackingItems && Array.isArray(trackingItems)) {
-          trackingItems.forEach((item: any) => {
-            const barcode = item.barcode;
-            const orderId = item.order_id;
-            const orderCode = orderIdToCodeMap.get(orderId);
-
-            if (barcode && orderCode) {
-              // Build all batches map (including those in trips)
-              if (!allBatchesMap.has(barcode)) {
-                allBatchesMap.set(barcode, []);
-              }
-              const allOrderCodes = allBatchesMap.get(barcode)!;
-              if (!allOrderCodes.includes(orderCode)) {
-                allOrderCodes.push(orderCode);
-              }
-
-              // Only add to batchMap if batch is NOT in trips
-              if (!barcodesInTrips.has(barcode)) {
-                if (!batchMap.has(barcode)) {
-                  batchMap.set(barcode, []);
-                }
-                const orderCodes = batchMap.get(barcode)!;
-                if (!orderCodes.includes(orderCode)) {
-                  orderCodes.push(orderCode);
-                }
-              }
-            }
-          });
-        }
-
-        // Get all order codes from batches NOT in trips
-        const allOrderCodesInBatches = Array.from(batchMap.values()).flat();
-        const uniqueOrderCodesInBatches = Array.from(new Set(allOrderCodesInBatches));
-
-        // Get all order codes from batches that ARE in trips (to exclude them)
-        const orderCodesInTripsBatches = new Set<string>();
-        barcodesInTrips.forEach((barcode) => {
-          const orderCodes = allBatchesMap.get(barcode) || [];
-          orderCodes.forEach((code) => orderCodesInTripsBatches.add(code));
-        });
-
-        // Count waiting_transport orders using the same filtering logic as fetchTrackingItemsForBatch
-        // Only include orders with services (goods-only orders with CREATED items go to waiting_return)
-        // Exclude orders with factory_id (they belong in factory tab)
-        const waitingTransportOrders = processingOrdersResponse.data.filter((order) => {
-          if (order.status !== OrderStatus.PROCESSING) return false;
-          if (isOnlyGoodsOrder(order)) return false; // Must have services for waiting_transport
-          if (order.factory_id && order.factory_id !== "") return false; // Exclude orders with factory_id
-          if (orderCodesInTripsBatches.has(order.code)) return false; // Not in batches that are in trips
-
-          // Check if order is delivering (has order_items with PICKING, DELIVERING, or WASHING status) or order is at factory
-          const hasPickingOrDeliveringOrWashingOrAtFactoryItems = order.order_items?.some(
-            (item: any) =>
-              item.service_status === ServiceOrderItemStatus.PICKING ||
-              item.service_status === ServiceOrderItemStatus.DELIVERING ||
-              item.service_status === ServiceOrderItemStatus.WASHING
-          ) || order.order_items?.some(
-            (item: any) => item.service_status === ServiceOrderItemStatus.AT_FACTORY
-          );
-          if (hasPickingOrDeliveringOrWashingOrAtFactoryItems) return false; // Exclude delivering/washing orders
-
-          // For orders with services, include them
-          return true;
-        });
-
-        counts.waiting_transport = waitingTransportOrders.length;
+        const transportGroups = await loadTransportOrders(storeId, "hub");
+        waitingOrderIds = new Set(transportGroups.map((group) => group.orderId));
+        counts.waiting_transport = transportGroups.length;
       } catch (error) {
         console.error("Failed to fetch tracking items for count:", error);
       }
@@ -1323,27 +1284,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
 
         // Skip if order is in waiting_transport (already counted above)
         // Check if order should be in waiting_transport (only orders with services, not goods-only)
-        const isInWaitingTransport = (() => {
-          if (order.status !== OrderStatus.PROCESSING) return false;
-          // Exclude orders with factory_id (they belong in factory tab)
-          if (isInFactory) return false;
-          if (isOnlyGoodsOrder(order)) return false; // Goods-only orders don't go to waiting_transport
-
-          // Check if order is delivering (has order_items with PICKING or DELIVERING status) or at factory
-          const hasPickingOrDeliveringOrAtFactoryItems = order.order_items?.some(
-            (item: any) =>
-              item.service_status === ServiceOrderItemStatus.PICKING ||
-              item.service_status === ServiceOrderItemStatus.DELIVERING ||
-              item.service_status === ServiceOrderItemStatus.WASHING
-          ) || order.order_items?.some(
-            (item: any) =>
-              item.service_status === ServiceOrderItemStatus.AT_FACTORY
-          );
-          if (hasPickingOrDeliveringOrAtFactoryItems) return false;
-
-          // For orders with services, include them
-          return true;
-        })();
+        const isInWaitingTransport = waitingOrderIds.has(order.id);
 
         // Check if order is in waiting_return tab
         // CUSTOMER_INCIDENTS_REJECTED OR
@@ -1451,6 +1392,9 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
           const tabStatus = mapOrderStatusToTab(order.status, order);
           if (tabStatus === "new") counts.new++;
           else if (tabStatus === "processing") counts.processing++;
+          if (tabStatus !== "new" && isStorePaymentConfirm(order.payment_status)) {
+            counts.new++;
+          }
           // Don't count factory here as it's already counted above for PROCESSING orders
           // Don't count waiting_transport here as it's already counted above
         }
@@ -1663,10 +1607,6 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       if (isInBatch) return false;
     }
     return selectedOrders.has(orderId);
-  };
-
-  const isBatchSelected = (barcode: string) => {
-    return selectedBatches.has(barcode);
   };
 
   // Get count of selected orders excluding batch orders
@@ -1978,7 +1918,31 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
     safePage * PAGE_SIZE,
     safePage * PAGE_SIZE + PAGE_SIZE
   );
-  const pageOrderIds = new Set(pageOrders.map((card) => card.id));
+
+  const openTransportOrder = async (orderId: string, orderCode: string) => {
+    if (!storeId) return;
+    try {
+      const response = await orderService.searchStoreOrders(
+        {
+          code: orderCode,
+          hub_id: storeId,
+          fetch_order_items: true,
+        },
+        { page: 0, size: 5 }
+      );
+      const order =
+        response.data?.find((item) => item.id === orderId) ?? response.data?.[0];
+      if (!order) {
+        compatAlert("Không tìm thấy", `Không tìm thấy đơn ${orderCode}`);
+        return;
+      }
+      onOrderPress(order);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Không thể tải đơn hàng";
+      compatAlert("Lỗi", message);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -1995,7 +1959,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         />
       </View>
 
-      {totalPages > 1 && (
+      {activeTab !== "waiting_transport" && totalPages > 1 && (
         <View style={styles.paginationRow}>
           <TouchableOpacity
             style={[styles.pageArrow, safePage === 0 && styles.pageArrowDisabled]}
@@ -2031,6 +1995,23 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         </View>
       )}
 
+      {activeTab === "waiting_transport" && storeId ? (
+        <WaitingTransportPanel
+          storeId={storeId}
+          sourceKind="hub"
+          reloadKey={refreshKey ?? 0}
+          onCount={(count) =>
+            setTabCounts((prev) =>
+              prev.waiting_transport === count
+                ? prev
+                : { ...prev, waiting_transport: count }
+            )
+          }
+          onOrderPress={(orderId, orderCode) => {
+            void openTransportOrder(orderId, orderCode);
+          }}
+        />
+      ) : (
       <ScrollView
         ref={ordersListRef}
         style={styles.ordersList}
@@ -2075,47 +2056,6 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             </View>
           ) : (
             <>
-              {/* Batch Groups for waiting_transport tab */}
-              {activeTab === "waiting_transport" && batches.size > 0 && (
-                <>
-                  {Array.from(batches.entries())
-                    .filter(([, orderCodes]) =>
-                      orderCodes.some((code) => pageOrderIds.has(code))
-                    )
-                    .map(
-                    ([barcode, orderCodes]) => (
-                      <BatchGroupCard
-                        key={barcode}
-                        barcode={barcode}
-                        orderCodes={orderCodes}
-                        orders={orders}
-                        orderMap={orderMap}
-                        isSelected={isBatchSelected(barcode)}
-                        isExpanded={expandedGroups.has(barcode)}
-                        onSelect={(selected) => {
-                          if (selected) {
-                            setSelectedBatches((prev) => {
-                              const newSet = new Set(prev);
-                              newSet.add(barcode);
-                              return newSet;
-                            });
-                          } else {
-                            setSelectedBatches((prev) => {
-                              const newSet = new Set(prev);
-                              newSet.delete(barcode);
-                              return newSet;
-                            });
-                          }
-                        }}
-                        onToggleExpand={() => handleGroupToggle(barcode)}
-                        onOrderPress={onOrderPress}
-                        onPrintOrders={(codes) => void printReceiptsForOrders(codes)}
-                      />
-                    )
-                  )}
-                </>
-              )}
-
               {/* Grouped Orders Card (for manual grouping) */}
               {groupedOrders.size > 0 && (
                 <View style={styles.groupCard}>
@@ -2219,41 +2159,16 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
                 </View>
               )}
 
-              {/* Regular Orders (only show if not in batches for waiting_transport tab) */}
               {pageOrders
-                .filter((orderCard) => {
-                  // For waiting_transport tab, hide orders that are in batches
-                  if (activeTab === "waiting_transport") {
-                    const isInBatch = Array.from(batches.values()).some(
-                      (codes) => codes.includes(orderCard.id)
-                    );
-                    return !isInBatch && !groupedOrders.has(orderCard.id);
-                  }
-                  return !groupedOrders.has(orderCard.id);
-                })
+                .filter((orderCard) => !groupedOrders.has(orderCard.id))
                 .map((orderCard) => {
                   const order = orderMap.get(orderCard.id);
-                  const isWaitingTransportTab =
-                    activeTab === "waiting_transport";
-                  const showSelection = isWaitingTransportTab;
-
                   return (
                     <OrderCardStore
                       key={orderCard.id}
                       order={orderCard}
                       onPress={() => order && onOrderPress(order)}
                       expandable
-                      isSelected={
-                        showSelection
-                          ? isOrderSelected(orderCard.id)
-                          : undefined
-                      }
-                      onSelect={
-                        showSelection
-                          ? (selected) =>
-                            handleOrderSelect(orderCard.id, selected)
-                          : undefined
-                      }
                     />
                   );
                 })}
@@ -2261,7 +2176,9 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
           )}
         </View>
       </ScrollView>
+      )}
 
+      {activeTab !== "waiting_transport" && (
       <FloatingActionButtons
         selectedOrdersCount={getSelectedOrdersCount()}
         selectedBatchesCount={selectedBatches.size}
@@ -2273,6 +2190,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         onConfirmGroupShipment={handleConfirmGroupShipment}
         showGroupConfirm={groupedOrders.size > 0}
       />
+      )}
 
       <FactorySelectionDialog
         visible={showFactoryDialog}

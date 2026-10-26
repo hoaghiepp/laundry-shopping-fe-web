@@ -351,6 +351,8 @@ export const mapOrderToCardData = (
   if (
     order.payment_status === PaymentStatus.UNPAID ||
     order.payment_status === PaymentStatus.WAITING_CONFIRM ||
+    order.payment_status === PaymentStatus.WAITING_STORE_CONFIRM ||
+    order.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM ||
     order.payment_status === PaymentStatus.PARTIAL_PAID
   ) {
     const codAmount = calculateCODAmount(order);

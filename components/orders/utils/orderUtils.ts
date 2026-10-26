@@ -147,12 +147,25 @@ export const formatPrice = (amount: number): string => {
   return FormatUtils.toVndCurrency(amount);
 };
 
+/** Cash the store still has to confirm. Includes older WAITING_CONFIRM rows. */
+export function isStorePaymentConfirm(
+  status: PaymentStatus | string | null | undefined
+): boolean {
+  return (
+    status === PaymentStatus.WAITING_STORE_CONFIRM ||
+    status === PaymentStatus.WAITING_CONFIRM
+  );
+}
+
 export const getPaymentMethodDisplay = (paymentStatus: PaymentStatus): string => {
   switch (paymentStatus) {
     case PaymentStatus.PAID:
       return "Đã thanh toán";
+    case PaymentStatus.WAITING_STORE_CONFIRM:
     case PaymentStatus.WAITING_CONFIRM:
       return "Chờ cửa hàng xác nhận tiền";
+    case PaymentStatus.WAITING_CUSTOMER_CONFIRM:
+      return "Chờ khách xác nhận";
     case PaymentStatus.PARTIAL_PAID:
       return "Thanh toán một phần";
     case PaymentStatus.UNPAID:
@@ -172,6 +185,9 @@ export function getPaymentStatusBadge(
   switch (status as PaymentStatus) {
     case PaymentStatus.UNPAID:
       return { text: "Chưa thanh toán", color: "#B91C1C", bgColor: "#FEE2E2" };
+    case PaymentStatus.WAITING_CUSTOMER_CONFIRM:
+      return { text: "Chờ khách xác nhận", color: "#1D4ED8", bgColor: "#DBEAFE" };
+    case PaymentStatus.WAITING_STORE_CONFIRM:
     case PaymentStatus.WAITING_CONFIRM:
       return { text: "Chờ xác nhận tiền", color: "#92400E", bgColor: "#FEF3C7" };
     case PaymentStatus.PARTIAL_PAID:

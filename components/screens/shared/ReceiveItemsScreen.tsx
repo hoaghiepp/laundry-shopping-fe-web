@@ -6,12 +6,13 @@ import {
 import { LogisticTripStatus } from "@/constants/enum";
 import { compatAlert } from "@/lib/compatAlert";
 import { extractApiErrorCode, extractApiErrorMessage } from "@/services/api/apiUtils";
-import { logisticService } from "@/services/api/logisticService";
+import { logisticService, TripReceiveScan } from "@/services/api/logisticService";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -27,6 +28,8 @@ interface ReceiveItemsScreenProps {
   sourceStoreName: string;
   hubId: string;
   hubType: "factory" | "store";
+  /** Header top inset; web embeds this screen under the fixed nav bar. 32 + 16 = old 48. */
+  topInset?: number;
   onBack: () => void;
   onComplete: () => void;
 }
@@ -36,6 +39,7 @@ export const ReceiveItemsScreen: React.FC<ReceiveItemsScreenProps> = ({
   tripCode,
   sourceStoreName,
   hubType,
+  topInset = 32,
   onBack,
   onComplete,
 }) => {
@@ -86,26 +90,19 @@ export const ReceiveItemsScreen: React.FC<ReceiveItemsScreenProps> = ({
   const progress = Math.min(100, (done / progressBase) * 100);
   const tripStatus = manifest?.trip?.status;
 
-  const submitScan = async (raw: string) => {
-    const code = raw.trim();
-    if (!code || busy) return;
+  const sendScans = async (scans: TripReceiveScan[], code?: string) => {
+    if (busy || scans.length === 0) return;
     setBusy(true);
     setShowScanner(false);
     try {
-      const response = await logisticService.receiveTrip(tripId, [
-        {
-          barcode: code,
-          condition: damaged ? "DAMAGED" : "NORMAL",
-          note: note.trim() || undefined,
-        },
-      ]);
+      const response = await logisticService.receiveTrip(tripId, scans);
       const result = response?.data;
       const rejectedRows = result?.rejected || [];
       setRejected(rejectedRows);
       if (rejectedRows.length > 0) {
         const detail = rejectedRows.map((row: any) => `${row.barcode}: ${row.reason}`).join("\n");
         compatAlert("Không nhận được", detail);
-      } else if ((result?.already_received || []).includes(code)) {
+      } else if (code && (result?.already_received || []).includes(code)) {
         compatAlert("Đã nhận", `${code} đã được quét trước đó.`);
       }
       setBarcode("");
@@ -117,6 +114,49 @@ export const ReceiveItemsScreen: React.FC<ReceiveItemsScreenProps> = ({
     } finally {
       setBusy(false);
     }
+  };
+
+  const submitScan = (raw: string) => {
+    const code = raw.trim();
+    if (!code) return;
+    return sendScans(
+      [
+        {
+          barcode: code,
+          condition: damaged ? "DAMAGED" : "NORMAL",
+          note: note.trim() || undefined,
+        },
+      ],
+      code,
+    );
+  };
+
+  /** Mark a manifest line received without a camera (web / keyboard wedge scanner). */
+  const receiveLine = (lineBarcode: string) =>
+    sendScans(
+      [
+        {
+          barcode: lineBarcode,
+          condition: damaged ? "DAMAGED" : "NORMAL",
+          note: damaged ? note.trim() || undefined : undefined,
+        },
+      ],
+      lineBarcode,
+    );
+
+  const receiveAllPending = () => {
+    const scans: TripReceiveScan[] = pending
+      .filter((line) => line.barcode)
+      .map((line) => ({ barcode: line.barcode, condition: "NORMAL" }));
+    if (scans.length === 0) return;
+    compatAlert(
+      "Nhận tất cả",
+      `Đánh dấu ${scans.length} món còn lại là đã nhận (bình thường)?`,
+      [
+        { text: "Quay lại", style: "cancel" },
+        { text: "Nhận tất cả", onPress: () => void sendScans(scans) },
+      ],
+    );
   };
 
   const openScanner = async () => {
@@ -198,8 +238,13 @@ export const ReceiveItemsScreen: React.FC<ReceiveItemsScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={onBack} style={styles.back}>
+      <View style={[styles.header, { paddingTop: topInset + 16 }]}>
+        <TouchableOpacity
+          onPress={onBack}
+          style={styles.back}
+          accessibilityRole="button"
+          accessibilityLabel="Quay lại"
+        >
           <FontAwesome5 name="arrow-left" size={16} color="#1F2937" />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
@@ -246,13 +291,20 @@ export const ReceiveItemsScreen: React.FC<ReceiveItemsScreenProps> = ({
           />
         ) : null}
         <View style={styles.scanActions}>
-          <TouchableOpacity style={styles.secondary} onPress={openScanner} disabled={busy}>
-            <Text style={styles.secondaryText}>Camera</Text>
-          </TouchableOpacity>
+          {Platform.OS !== "web" ? (
+            <TouchableOpacity style={styles.secondary} onPress={openScanner} disabled={busy}>
+              <Text style={styles.secondaryText}>Camera</Text>
+            </TouchableOpacity>
+          ) : null}
           <TouchableOpacity style={styles.primary} onPress={() => submitScan(barcode)} disabled={busy}>
             <Text style={styles.primaryText}>{busy ? "Đang gửi" : "Nhận món"}</Text>
           </TouchableOpacity>
         </View>
+        {Platform.OS === "web" ? (
+          <Text style={styles.hint}>
+            Camera không dùng được trên web: nhập mã bằng máy quét cầm tay hoặc chọn món bên dưới.
+          </Text>
+        ) : null}
         {tripStatus === LogisticTripStatus.IN_TRANSIT ? (
           <TouchableOpacity onPress={markArrived} disabled={busy}>
             <Text style={styles.link}>Xác nhận đến nơi trước khi quét</Text>
@@ -271,9 +323,22 @@ export const ReceiveItemsScreen: React.FC<ReceiveItemsScreenProps> = ({
       ) : null}
 
       <ScrollView style={styles.list} contentContainerStyle={{ padding: 16 }}>
-        <Text style={styles.section}>Chờ nhận ({pending.length})</Text>
+        <View style={styles.sectionRow}>
+          <Text style={styles.section}>Chờ nhận ({pending.length})</Text>
+          {pending.length > 0 ? (
+            <TouchableOpacity onPress={receiveAllPending} disabled={busy}>
+              <Text style={styles.sectionAction}>Nhận tất cả</Text>
+            </TouchableOpacity>
+          ) : null}
+        </View>
         {pending.map((line) => (
-          <LineCard key={line.line_id} line={line} onPassport={setPassportBarcode} />
+          <LineCard
+            key={line.line_id}
+            line={line}
+            busy={busy}
+            onReceive={line.barcode ? () => receiveLine(line.barcode) : undefined}
+            onPassport={setPassportBarcode}
+          />
         ))}
         <Text style={styles.section}>Đã xử lý</Text>
         {lines
@@ -314,32 +379,49 @@ export const ReceiveItemsScreen: React.FC<ReceiveItemsScreenProps> = ({
 
 function LineCard({
   line,
+  busy,
+  onReceive,
   onPassport,
 }: {
   line: any;
+  busy?: boolean;
+  onReceive?: () => void;
   onPassport: (barcode: string) => void;
 }) {
   const status = getItemStatusDisplay(line.line_status);
   return (
-    <TouchableOpacity
-      style={styles.line}
-      onPress={() => line.barcode && onPassport(line.barcode)}
-      disabled={!line.barcode}
-    >
-      <View style={{ flex: 1 }}>
-        <Text style={styles.lineTitle}>{line.barcode || line.tracking_id}</Text>
-        <Text style={styles.lineMeta}>
-          {line.order_code || "—"}
-          {line.container_code ? ` · bao ${line.container_code}` : ""}
-        </Text>
-        {line.received_condition && line.received_condition !== "NORMAL" ? (
-          <Text style={styles.lineMeta}>{conditionLabel(line.received_condition)}</Text>
-        ) : null}
-      </View>
-      <View style={[styles.badge, { backgroundColor: status.bg }]}>
-        <Text style={{ color: status.color, fontSize: 12, fontWeight: "700" }}>{status.text}</Text>
-      </View>
-    </TouchableOpacity>
+    <View style={styles.line}>
+      <TouchableOpacity
+        style={styles.lineMain}
+        onPress={() => line.barcode && onPassport(line.barcode)}
+        disabled={!line.barcode}
+      >
+        <View style={{ flex: 1 }}>
+          <Text style={styles.lineTitle}>{line.barcode || line.tracking_id}</Text>
+          <Text style={styles.lineMeta}>
+            {line.order_code || "—"}
+            {line.container_code ? ` · bao ${line.container_code}` : ""}
+          </Text>
+          {line.received_condition && line.received_condition !== "NORMAL" ? (
+            <Text style={styles.lineMeta}>{conditionLabel(line.received_condition)}</Text>
+          ) : null}
+        </View>
+        <View style={[styles.badge, { backgroundColor: status.bg }]}>
+          <Text style={{ color: status.color, fontSize: 12, fontWeight: "700" }}>{status.text}</Text>
+        </View>
+      </TouchableOpacity>
+      {onReceive ? (
+        <TouchableOpacity
+          style={styles.lineReceive}
+          onPress={onReceive}
+          disabled={busy}
+          accessibilityRole="button"
+          accessibilityLabel={`Nhận món ${line.barcode}`}
+        >
+          <FontAwesome5 name="check" size={14} color="#FFFFFF" />
+        </TouchableOpacity>
+      ) : null}
+    </View>
   );
 }
 
@@ -351,7 +433,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
     padding: 16,
-    paddingTop: 48,
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
     borderBottomColor: "#E5E7EB",
@@ -394,11 +475,18 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   secondaryText: { color: "#2563EB", fontWeight: "700" },
+  hint: { color: "#6B7280", fontSize: 12 },
   link: { color: "#2563EB", fontWeight: "600" },
   rejectBox: { marginHorizontal: 16, backgroundColor: "#FEF2F2", borderRadius: 8, padding: 10 },
   rejectText: { color: "#B91C1C", fontSize: 13 },
   list: { flex: 1 },
   section: { fontWeight: "700", color: "#111827", marginBottom: 8, marginTop: 8 },
+  sectionRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  sectionAction: { color: "#2563EB", fontWeight: "700", marginTop: 8 },
   line: {
     flexDirection: "row",
     alignItems: "center",
@@ -409,6 +497,15 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     borderWidth: 1,
     borderColor: "#E5E7EB",
+  },
+  lineMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 8 },
+  lineReceive: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    backgroundColor: "#059669",
+    alignItems: "center",
+    justifyContent: "center",
   },
   lineTitle: { fontWeight: "700", color: "#111827" },
   lineMeta: { color: "#6B7280", fontSize: 13, marginTop: 2 },

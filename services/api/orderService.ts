@@ -97,6 +97,7 @@ export interface Order {
   note?: string;
   status: OrderStatus;
   payment_status: PaymentStatus;
+  created_by_store?: boolean;
   is_split_shipment?: boolean;
   is_need_shipment?: boolean;
   deleted: boolean;

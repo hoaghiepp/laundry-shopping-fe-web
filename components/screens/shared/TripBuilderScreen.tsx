@@ -1,28 +1,38 @@
+import { loadTransportOrders } from "@/components/orders/loadTransportOrders";
+import { CarrierSelectionDialog } from "@/components/store/logistics/CarrierSelectionScreen";
 import { StoreType } from "@/constants/enum";
 import { compatAlert } from "@/lib/compatAlert";
-import { extractApiErrorMessage } from "@/services/api/apiUtils";
-import { logisticService, LogisticsTripItem } from "@/services/api/logisticService";
+import { extractApiErrorCode, extractApiErrorMessage } from "@/services/api/apiUtils";
+import {
+  AddressLocation,
+  goshipService,
+  ShipmentRequest,
+} from "@/services/api/goshipService";
+import { logisticService } from "@/services/api/logisticService";
 import { storeService } from "@/services/api/storeService";
-import { trackingStatusLabel } from "@/utils/serviceLines";
+import {
+  OrderGroup,
+  selectionTotals,
+  TransportDirection,
+} from "@/utils/transportGroups";
 import { FontAwesome5 } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 
-const FACTORY_STATUSES = ["RECEIVED_FACTORY", "WASHING", "DRIED", "IRONED", "PACKED"];
-
 interface TripBuilderScreenProps {
   sourceStoreId: string;
-  sourceKind: "hub" | "factory";
+  sourceKind: TransportDirection;
   onBack: () => void;
   onDone: () => void;
+  initialGroups?: OrderGroup[];
 }
 
 export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
@@ -30,17 +40,18 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
   sourceKind,
   onBack,
   onDone,
+  initialGroups,
 }) => {
+  const seedRef = useRef(initialGroups);
   const [destinations, setDestinations] = useState<any[]>([]);
   const [destinationId, setDestinationId] = useState("");
-  const [items, setItems] = useState<any[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [containerCode, setContainerCode] = useState("");
-  const [drivers, setDrivers] = useState<any[]>([]);
-  const [driverId, setDriverId] = useState("");
+  const [groups, setGroups] = useState<OrderGroup[]>(seedRef.current ?? []);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [createdTrip, setCreatedTrip] = useState<any>(null);
+  const [carrierOpen, setCarrierOpen] = useState(false);
+  const [hubProfile, setHubProfile] = useState<any>(null);
+  const [destProfile, setDestProfile] = useState<any>(null);
 
   const title = sourceKind === "hub" ? "Tạo chuyến đi xưởng" : "Tạo chuyến trả cửa hàng";
 
@@ -49,7 +60,7 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
     const load = async () => {
       setLoading(true);
       try {
-        const [storeResponse, trackingResponse, staffResponse] = await Promise.all([
+        const [storeResponse, loaded] = await Promise.all([
           storeService.searchStore(
             {
               deleted: false,
@@ -57,26 +68,18 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
             },
             { page: 0, size: 100 }
           ),
-          logisticService.searchTrackingItems(
-            sourceKind === "hub"
-              ? { current_store_id: sourceStoreId, status: "TAGGED" }
-              : { current_store_id: sourceStoreId },
-            { page: 0, size: 200 }
-          ),
-          storeService
-            .searchStaff({ store_id: sourceStoreId, deleted: false }, { page: 0, size: 100 })
-            .catch(() => ({ data: [] })),
+          seedRef.current
+            ? Promise.resolve(seedRef.current)
+            : loadTransportOrders(sourceStoreId, sourceKind),
         ]);
         if (cancelled) return;
         const stores = storeResponse?.data || [];
         setDestinations(stores);
         if (stores.length === 1) setDestinationId(stores[0].id);
-        setDrivers(staffResponse?.data || []);
-        const rows = (trackingResponse?.data || []).filter((row: any) => eligible(row, sourceKind));
-        setItems(rows);
+        setGroups(loaded);
       } catch (error) {
         if (!cancelled) {
-          compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể tải món đồ để tạo chuyến"));
+          compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể tải đơn để tạo chuyến"));
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -88,13 +91,36 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
     };
   }, [sourceStoreId, sourceKind]);
 
-  const toggle = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const selectedGroups = groups.filter((group) => group.selectedIds.length > 0);
+
+  const explain = (error: unknown, fallback: string) => {
+    const code = extractApiErrorCode(error);
+    if (code === "400045" || code === "400053") {
+      loadTransportOrders(sourceStoreId, sourceKind)
+        .then((fresh) => {
+          setGroups((prev) => {
+            const message = extractApiErrorMessage(error, "");
+            const kept =
+              code === "400053"
+                ? prev.filter((group) => !message.includes(group.orderCode))
+                : prev;
+            const byId = new Map(kept.map((group) => [group.orderId, group]));
+            return fresh
+              .filter((group) => (code === "400053" ? byId.has(group.orderId) : true))
+              .map((group) => {
+                const old = byId.get(group.orderId);
+                if (!old) return group;
+                const eligible = new Set(group.garments.map((item) => item.id));
+                return {
+                  ...group,
+                  selectedIds: old.selectedIds.filter((id) => eligible.has(id)),
+                };
+              });
+          });
+        })
+        .catch(() => undefined);
+    }
+    compatAlert("Lỗi", extractApiErrorMessage(error, fallback));
   };
 
   const createTrip = async () => {
@@ -102,31 +128,27 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
       compatAlert("Thiếu điểm đến", "Chọn xưởng hoặc cửa hàng nhận hàng.");
       return;
     }
-    if (selected.size === 0) {
-      compatAlert("Chưa chọn món", "Chọn ít nhất một món đồ.");
+    if (selectedGroups.length === 0) {
+      compatAlert("Chưa chọn món", "Chọn ít nhất một đơn.");
       return;
     }
-    const bag = containerCode.trim();
-    const logisticTripItems: LogisticsTripItem[] = items
-      .filter((item) => selected.has(item.id))
-      .map((item) => ({
-        service_item_tracking_id: item.id,
-        container_code: bag || undefined,
-      }));
+    const logisticTripItems = selectedGroups.flatMap((group) =>
+      group.selectedIds.map((id) => ({
+        service_item_tracking_id: id,
+      }))
+    );
     setSaving(true);
     try {
       const response = await logisticService.createTrips({
         source_store_id: sourceStoreId,
         destination_store_id: destinationId,
-        driver_staff_id: driverId || undefined,
         logistic_trip_items: logisticTripItems,
       });
       const tripId = response?.data?.id;
       const fresh = tripId ? await logisticService.getTripDetails(tripId) : response;
       setCreatedTrip(fresh?.data || response?.data);
-      setSelected(new Set());
     } catch (error) {
-      compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể tạo chuyến"));
+      explain(error, "Không thể tạo chuyến");
     } finally {
       setSaving(false);
     }
@@ -141,38 +163,139 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
   const activeLines = (createdTrip?.logistic_trip_items || []).filter(
     (line: any) => line.status !== "REMOVED"
   );
+  const onTrip = new Set(activeLines.map((line: any) => line.service_item_tracking_id));
 
-  const addLines = async () => {
-    if (!createdTrip?.id || selected.size === 0) return;
-    const bag = containerCode.trim();
+  const removeOrder = async (lines: any[]) => {
+    if (!createdTrip?.id || lines.length === 0) return;
     setSaving(true);
     try {
-      for (const item of items.filter((row) => selected.has(row.id))) {
-        await logisticService.addTripItem(createdTrip.id, {
-          service_item_tracking_id: item.id,
-          container_code: bag || undefined,
-        });
+      for (const line of lines) {
+        await logisticService.removeTripItem(createdTrip.id, line.id);
       }
-      setSelected(new Set());
       await refreshTrip(createdTrip.id);
     } catch (error) {
-      compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể thêm món vào chuyến"));
+      explain(error, "Không thể bỏ đơn khỏi chuyến");
+      if (createdTrip?.id) await refreshTrip(createdTrip.id).catch(() => undefined);
     } finally {
       setSaving(false);
     }
   };
 
-  const removeLine = async (itemId: string) => {
+  const pendingIds = (group: OrderGroup) =>
+    group.garments
+      .map((item) => item.id)
+      .filter((id) => !onTrip.has(id))
+      .filter((id) => group.selectedIds.length === 0 || group.selectedIds.includes(id));
+
+  const addOrder = async (group: OrderGroup) => {
     if (!createdTrip?.id) return;
+    const ids = pendingIds(group);
+    if (ids.length === 0) return;
     setSaving(true);
     try {
-      await logisticService.removeTripItem(createdTrip.id, itemId);
+      for (const id of ids) {
+        await logisticService.addTripItem(createdTrip.id, {
+          service_item_tracking_id: id,
+        });
+      }
       await refreshTrip(createdTrip.id);
     } catch (error) {
-      compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể bỏ món khỏi chuyến"));
+      explain(error, "Không thể thêm đơn vào chuyến");
+      if (createdTrip?.id) await refreshTrip(createdTrip.id).catch(() => undefined);
     } finally {
       setSaving(false);
     }
+  };
+
+  const locationOf = (profile: any): AddressLocation | null => {
+    const address = profile?.address;
+    if (!address || typeof address !== "object") return null;
+    const district = address.district_id || address.district;
+    const city = address.province_id || address.province;
+    if (!district || !city) return null;
+    return { district, city, ward: address.ward_id || address.ward };
+  };
+
+  const openCarrier = async () => {
+    const destStoreId = createdTrip?.destination_store_id || destinationId;
+    if (!createdTrip?.id || !destStoreId) return;
+    setSaving(true);
+    try {
+      const [sourceRes, destRes] = await Promise.all([
+        storeService.getStoreProfile(createdTrip.source_store_id || sourceStoreId),
+        storeService.getStoreProfile(destStoreId),
+      ]);
+      if (!locationOf(sourceRes?.data) || !locationOf(destRes?.data)) {
+        compatAlert("Lỗi", "Cửa hàng chưa có địa chỉ để lấy báo giá.");
+        return;
+      }
+      setHubProfile(sourceRes.data);
+      setDestProfile(destRes.data);
+      setCarrierOpen(true);
+    } catch (error) {
+      compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể tải địa chỉ cửa hàng"));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectCarrier = async (
+    _carrierId: string,
+    tripId: string,
+    rateData?: any,
+    parcelData?: any,
+    addresses?: { from: any; to: any }
+  ) => {
+    if (!rateData || !parcelData || !addresses?.from || !addresses?.to) {
+      compatAlert("Lỗi", "Thiếu thông tin đơn vị vận chuyển.");
+      throw new Error("missing carrier");
+    }
+    const rateId = String(rateData.rate || rateData.id || rateData.rate_id || "");
+    if (!rateId) {
+      compatAlert("Lỗi", "Không tìm thấy mã bảng giá.");
+      throw new Error("missing rate");
+    }
+    const shipmentRequest: ShipmentRequest = {
+      shipment: {
+        rate: rateId,
+        payer: 1,
+        order_id: createdTrip?.trip_code || createdTrip?.code || tripId,
+        address_from: {
+          name: hubProfile?.name || "",
+          phone: hubProfile?.phone_contact || hubProfile?.phone_number || "",
+          street: addresses.from.address_detail,
+          ward: addresses.from.ward_id,
+          district: addresses.from.district_id,
+          city: addresses.from.province_id,
+        },
+        address_to: {
+          name: destProfile?.name || "",
+          phone: destProfile?.phone_contact || destProfile?.phone_number || "",
+          street: addresses.to.address_detail,
+          ward: addresses.to.ward_id,
+          district: addresses.to.district_id,
+          city: addresses.to.province_id,
+        },
+        parcel: {
+          cod: parcelData.cod || 0,
+          amount: parcelData.amount || 0,
+          weight: String(parcelData.weight || "1000"),
+          width: String(parcelData.width || "10"),
+          height: String(parcelData.height || "10"),
+          length: String(parcelData.length || "10"),
+        },
+      },
+    };
+    try {
+      await goshipService.createShipment(shipmentRequest);
+      await logisticService.departTrip(tripId);
+    } catch (error) {
+      compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể tạo vận đơn"));
+      throw error;
+    }
+    setCarrierOpen(false);
+    compatAlert("Đã gọi xe", "Đơn vận chuyển đã tạo và chuyến đã xuất phát.");
+    onDone();
   };
 
   const depart = async () => {
@@ -183,19 +306,27 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
       compatAlert("Đã xuất phát", "Các món đang trên đường và điểm nhận đã được báo.");
       onDone();
     } catch (error) {
-      compatAlert("Lỗi", extractApiErrorMessage(error, "Không thể xuất phát"));
+      explain(error, "Không thể xuất phát");
     } finally {
       setSaving(false);
     }
   };
 
+  const review = reviewOrders(groups, activeLines);
+  const addable = groups.filter((group) => pendingIds(group).length > 0);
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={createdTrip ? onDone : onBack} style={styles.back}>
-          <FontAwesome5 name="arrow-left" size={16} color="#1F2937" />
+        <TouchableOpacity
+          onPress={createdTrip ? onDone : onBack}
+          style={styles.back}
+          accessibilityRole="button"
+          accessibilityLabel="Quay lại"
+        >
+          <FontAwesome5 name="arrow-left" size={16} color="#0F172A" />
         </TouchableOpacity>
-        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.title}>{createdTrip ? "Kiểm tra chuyến" : title}</Text>
       </View>
 
       {loading ? (
@@ -207,154 +338,134 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             <Text style={styles.tripCode}>{createdTrip.trip_code || createdTrip.id}</Text>
             <Text style={styles.hint}>
-              Chuyến đang tạo. Thêm hoặc bỏ món trước khi xuất phát.
+              Chuyến đang tạo. Thêm hoặc bỏ đơn trước khi xuất phát.
             </Text>
-            <Text style={styles.label}>Món trên chuyến ({activeLines.length})</Text>
-            {activeLines.length === 0 ? (
+            {review.length === 0 ? (
               <Text style={styles.empty}>Chuyến chưa có món. Xuất phát đang tắt.</Text>
             ) : (
-              activeLines.map((line: any) => (
-                <View key={line.id} style={styles.item}>
-                  <View style={styles.itemBody}>
-                    <Text style={styles.itemTitle}>
-                      {items.find((row) => row.id === line.service_item_tracking_id)?.barcode ||
-                        line.service_item_tracking_id}
-                      {line.container_code ? ` · ${line.container_code}` : ""}
-                    </Text>
-                    <Text style={styles.itemMeta}>{line.order_code || line.status}</Text>
+              review.map((bucket) => (
+                <View key={bucket.key} style={styles.orderCard}>
+                  <View style={styles.orderHead}>
+                    <View style={styles.orderBody}>
+                      <Text style={styles.orderCode}>{bucket.title}</Text>
+                      <Text style={styles.meta}>{bucket.lines.length} món</Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.removeHit}
+                      onPress={() => removeOrder(bucket.lines)}
+                      disabled={saving}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Bỏ đơn ${bucket.title}`}
+                    >
+                      <Text style={styles.removeText}>Bỏ đơn</Text>
+                    </TouchableOpacity>
                   </View>
-                  <TouchableOpacity onPress={() => removeLine(line.id)} disabled={saving}>
-                    <Text style={styles.removeText}>Bỏ</Text>
-                  </TouchableOpacity>
+                  {bucket.lines.map((line) => (
+                    <Text key={line.id} style={styles.barcode}>
+                      {barcodeFor(groups, line)}
+                    </Text>
+                  ))}
                 </View>
               ))
             )}
-            <Text style={styles.label}>Thêm món</Text>
-            <TextInput
-              style={styles.input}
-              value={containerCode}
-              onChangeText={setContainerCode}
-              placeholder="Mã bao / sọt"
-              placeholderTextColor="#9CA3AF"
-            />
-            {items
-              .filter((item) => !activeLines.some((line: any) => line.service_item_tracking_id === item.id))
-              .map((item) => {
-                const on = selected.has(item.id);
-                return (
-                  <TouchableOpacity
-                    key={item.id}
-                    style={[styles.item, on && styles.itemOn]}
-                    onPress={() => toggle(item.id)}
-                  >
-                    <FontAwesome5
-                      name={on ? "check-square" : "square"}
-                      size={16}
-                      color={on ? "#2563EB" : "#9CA3AF"}
-                    />
-                    <View style={styles.itemBody}>
-                      <Text style={styles.itemTitle}>{item.barcode || item.id}</Text>
-                      <Text style={styles.itemMeta}>{item.order_code || trackingStatusLabel(item.status)}</Text>
-                    </View>
-                  </TouchableOpacity>
-                );
-              })}
+
+            {addable.length > 0 ? (
+              <>
+                <Text style={styles.label}>Thêm đơn</Text>
+                {addable.map((group) => (
+                  <View key={group.orderId} style={styles.orderCard}>
+                    <Text style={styles.orderCode}>{group.orderCode}</Text>
+                    <Text style={styles.meta}>{pendingIds(group).length} món</Text>
+                    <TouchableOpacity
+                      style={styles.secondary}
+                      onPress={() => addOrder(group)}
+                      disabled={saving}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Thêm đơn ${group.orderCode}`}
+                    >
+                      <Text style={styles.secondaryText}>Thêm đơn</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </>
+            ) : null}
           </ScrollView>
           <View style={styles.footer}>
-            <TouchableOpacity style={styles.secondary} onPress={addLines} disabled={saving || selected.size === 0}>
-              <Text style={styles.secondaryText}>Thêm món đã chọn</Text>
-            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.primary, (saving || activeLines.length === 0) && styles.disabled]}
-              onPress={depart}
+              onPress={() => void openCarrier()}
               disabled={saving || activeLines.length === 0}
+              accessibilityRole="button"
+              accessibilityLabel="Gọi xe"
             >
               {saving ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.primaryText}>Xuất phát</Text>
+                <Text style={styles.primaryText}>Gọi xe</Text>
               )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.secondary, (saving || activeLines.length === 0) && styles.disabled]}
+              onPress={depart}
+              disabled={saving || activeLines.length === 0}
+              accessibilityRole="button"
+              accessibilityLabel="Xuất phát"
+            >
+              <Text style={styles.secondaryText}>Xuất phát</Text>
             </TouchableOpacity>
           </View>
         </View>
       ) : (
         <>
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
-            <Text style={styles.label}>Tài xế</Text>
-            <TouchableOpacity
-              style={[styles.choice, !driverId && styles.choiceOn]}
-              onPress={() => setDriverId("")}
-            >
-              <Text style={styles.choiceText}>Chưa chọn</Text>
-            </TouchableOpacity>
-            {drivers.map((staff) => (
-              <TouchableOpacity
-                key={staff.id}
-                style={[styles.choice, driverId === staff.id && styles.choiceOn]}
-                onPress={() => setDriverId(staff.id)}
-              >
-                <Text style={styles.choiceText}>{staff.full_name || staff.staff_code || staff.id}</Text>
-              </TouchableOpacity>
-            ))}
-
             <Text style={styles.label}>Điểm đến</Text>
             {destinations.length === 0 ? (
               <Text style={styles.empty}>Chưa có điểm đến phù hợp.</Text>
             ) : (
-              destinations.map((store) => (
-                <TouchableOpacity
-                  key={store.id}
-                  style={[styles.choice, destinationId === store.id && styles.choiceOn]}
-                  onPress={() => setDestinationId(store.id)}
-                >
-                  <Text style={styles.choiceText}>{store.name}</Text>
-                </TouchableOpacity>
-              ))
-            )}
-
-            <Text style={styles.label}>Mã bao / sọt</Text>
-            <TextInput
-              style={styles.input}
-              value={containerCode}
-              onChangeText={setContainerCode}
-              placeholder="Ví dụ BAG-0042"
-              placeholderTextColor="#9CA3AF"
-            />
-
-            <Text style={styles.label}>Món đồ ({selected.size}/{items.length})</Text>
-            {items.length === 0 ? (
-              <Text style={styles.empty}>
-                {sourceKind === "hub"
-                  ? "Không có món đã gắn thẻ tại cửa hàng này."
-                  : "Không có món đang xử lý tại xưởng và chưa nằm trong mẻ."}
-              </Text>
-            ) : (
-              items.map((item) => {
-                const on = selected.has(item.id);
+              destinations.map((store) => {
+                const on = destinationId === store.id;
                 return (
                   <TouchableOpacity
-                    key={item.id}
-                    style={[styles.item, on && styles.itemOn]}
-                    onPress={() => toggle(item.id)}
+                    key={store.id}
+                    style={[styles.choice, on && styles.choiceOn]}
+                    onPress={() => setDestinationId(store.id)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: on }}
+                    accessibilityLabel={store.name}
                   >
-                    <FontAwesome5
-                      name={on ? "check-square" : "square"}
-                      size={16}
-                      color={on ? "#2563EB" : "#9CA3AF"}
-                    />
-                    <View style={styles.itemBody}>
-                      <Text style={styles.itemTitle}>{item.barcode || item.id}</Text>
-                      <Text style={styles.itemMeta}>
-                        {item.order_code || "Chưa có mã đơn"} · {trackingStatusLabel(item.status)}
-                      </Text>
-                    </View>
+                    <Text style={styles.choiceText}>{store.name}</Text>
                   </TouchableOpacity>
                 );
               })
             )}
+
+            <Text style={styles.label}>Đơn đã chọn ({selectionTotals(groups).orders})</Text>
+            {selectedGroups.length === 0 ? (
+              <Text style={styles.empty}>Chưa chọn đơn nào.</Text>
+            ) : (
+              selectedGroups.map((group) => (
+                <View key={group.orderId} style={styles.orderCard}>
+                  <Text style={styles.orderCode}>{group.orderCode}</Text>
+                  <Text style={styles.meta}>{group.selectedIds.length} món</Text>
+                  {group.garments
+                    .filter((item) => group.selectedIds.includes(item.id))
+                    .map((item) => (
+                      <Text key={item.id} style={styles.barcode}>
+                        {item.barcode}
+                      </Text>
+                    ))}
+                </View>
+              ))
+            )}
           </ScrollView>
           <View style={styles.footer}>
-            <TouchableOpacity style={styles.primary} onPress={createTrip} disabled={saving}>
+            <TouchableOpacity
+              style={[styles.primary, saving && styles.disabled]}
+              onPress={createTrip}
+              disabled={saving}
+              accessibilityRole="button"
+              accessibilityLabel="Tạo chuyến"
+            >
               {saving ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
@@ -364,88 +475,143 @@ export const TripBuilderScreen: React.FC<TripBuilderScreenProps> = ({
           </View>
         </>
       )}
+      {carrierOpen && createdTrip && hubProfile && destProfile && locationOf(hubProfile) && locationOf(destProfile) ? (
+        <CarrierSelectionDialog
+          visible={carrierOpen}
+          tripId={createdTrip.id}
+          tripCode={createdTrip.trip_code || createdTrip.code || createdTrip.id}
+          sourceAddress={locationOf(hubProfile) as AddressLocation}
+          destinationAddress={locationOf(destProfile) as AddressLocation}
+          sourceStoreId={hubProfile.id || createdTrip.source_store_id || sourceStoreId}
+          destinationStoreId={destProfile.id || createdTrip.destination_store_id || destinationId}
+          sourceStoreName={hubProfile.name}
+          destinationStoreName={destProfile.name}
+          onSelectCarrier={selectCarrier}
+          onClose={() => setCarrierOpen(false)}
+        />
+      ) : null}
     </View>
   );
 };
 
-function eligible(item: any, sourceKind: "hub" | "factory"): boolean {
-  if (item.current_trip_id) return false;
-  if (item.item_condition === "MISSING") return false;
-  if (sourceKind === "hub") return item.status === "TAGGED";
-  return FACTORY_STATUSES.includes(item.status) && !item.current_batch_id;
+function barcodeFor(groups: OrderGroup[], line: any) {
+  for (const group of groups) {
+    const garment = group.garments.find((item) => item.id === line.service_item_tracking_id);
+    if (garment) return garment.barcode;
+  }
+  return line.barcode || line.service_item_tracking_id;
 }
 
+function reviewOrders(groups: OrderGroup[], lines: any[]) {
+  const idToGroup = new Map<string, OrderGroup>();
+  groups.forEach((group) => {
+    group.garments.forEach((item) => idToGroup.set(item.id, group));
+  });
+  const buckets = new Map<string, { key: string; title: string; lines: any[] }>();
+  for (const line of lines) {
+    const group = idToGroup.get(line.service_item_tracking_id);
+    const key = String(group?.orderId || line.order_code || line.id);
+    const title = String(group?.orderCode || line.order_code || "Món khác");
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { key, title, lines: [] };
+      buckets.set(key, bucket);
+    }
+    bucket.lines.push(line);
+  }
+  return Array.from(buckets.values());
+}
+
+const webPointer = Platform.OS === "web" ? ({ cursor: "pointer" } as const) : undefined;
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F9FAFB" },
+  container: { flex: 1, backgroundColor: "#F8FAFC" },
   header: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
-    padding: 16,
-    paddingTop: 48,
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 12,
     backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: "#E5E7EB",
+    borderBottomColor: "#E2E8F0",
   },
-  back: { width: 32, height: 32, alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 18, fontWeight: "700", color: "#111827" },
+  back: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+    ...(webPointer || {}),
+  },
+  title: { fontSize: 18, fontWeight: "700", color: "#0F172A" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  body: { padding: 16, gap: 12 },
-  tripCode: { fontSize: 20, fontWeight: "700", color: "#111827" },
-  hint: { fontSize: 14, color: "#4B5563", lineHeight: 20 },
+  tripCode: { fontSize: 20, fontWeight: "700", color: "#0F172A" },
+  hint: { marginTop: 4, fontSize: 14, lineHeight: 22, color: "#475569" },
   list: { flex: 1 },
-  listContent: { padding: 16, paddingBottom: 24 },
-  label: { marginTop: 12, marginBottom: 8, fontSize: 13, fontWeight: "700", color: "#374151" },
-  empty: { color: "#6B7280", fontSize: 14 },
+  listContent: { padding: 16, paddingBottom: 24, gap: 8 },
+  label: { marginTop: 8, marginBottom: 4, fontSize: 13, fontWeight: "700", color: "#334155" },
+  empty: { color: "#475569", fontSize: 14, lineHeight: 22 },
   choice: {
+    minHeight: 44,
+    justifyContent: "center",
     borderWidth: 1,
-    borderColor: "#E5E7EB",
+    borderColor: "#E2E8F0",
     borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     backgroundColor: "#FFFFFF",
+    ...(webPointer || {}),
   },
   choiceOn: { borderColor: "#2563EB", backgroundColor: "#EFF6FF" },
-  choiceText: { color: "#111827", fontWeight: "600" },
-  input: {
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    borderRadius: 8,
-    padding: 12,
+  choiceText: { color: "#0F172A", fontWeight: "600", fontSize: 15 },
+  orderCard: {
     backgroundColor: "#FFFFFF",
-    color: "#111827",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    padding: 12,
+    gap: 4,
   },
-  item: {
-    flexDirection: "row",
-    gap: 12,
+  orderHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  orderBody: { flex: 1 },
+  orderCode: { fontSize: 16, fontWeight: "700", color: "#0F172A" },
+  meta: { fontSize: 13, color: "#475569" },
+  barcode: { fontSize: 14, color: "#334155", marginTop: 4 },
+  removeHit: {
+    minHeight: 44,
+    minWidth: 44,
+    paddingHorizontal: 8,
     alignItems: "center",
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E5E7EB",
-    marginBottom: 8,
+    justifyContent: "center",
+    ...(webPointer || {}),
   },
-  itemOn: { borderColor: "#2563EB" },
-  itemBody: { flex: 1 },
-  itemTitle: { fontWeight: "700", color: "#111827" },
-  itemMeta: { color: "#6B7280", marginTop: 2, fontSize: 13 },
-  footer: { padding: 16, backgroundColor: "#FFFFFF", borderTopWidth: 1, borderTopColor: "#E5E7EB", gap: 8 },
+  footer: {
+    padding: 16,
+    backgroundColor: "#FFFFFF",
+    borderTopWidth: 1,
+    borderTopColor: "#E2E8F0",
+  },
   disabled: { opacity: 0.5 },
-  removeText: { color: "#DC2626", fontWeight: "700" },
+  removeText: { color: "#B91C1C", fontWeight: "700" },
   primary: {
+    minHeight: 44,
     backgroundColor: "#2563EB",
     borderRadius: 8,
-    paddingVertical: 14,
     alignItems: "center",
+    justifyContent: "center",
+    ...(webPointer || {}),
   },
-  primaryText: { color: "#FFFFFF", fontWeight: "700" },
+  primaryText: { color: "#FFFFFF", fontWeight: "700", fontSize: 16 },
   secondary: {
+    minHeight: 44,
+    marginTop: 8,
     borderWidth: 1,
-    borderColor: "#DBEAFE",
+    borderColor: "#BFDBFE",
     borderRadius: 8,
-    paddingVertical: 14,
     alignItems: "center",
+    justifyContent: "center",
+    ...(webPointer || {}),
   },
-  secondaryText: { color: "#2563EB", fontWeight: "700" },
+  secondaryText: { color: "#1D4ED8", fontWeight: "700" },
 });

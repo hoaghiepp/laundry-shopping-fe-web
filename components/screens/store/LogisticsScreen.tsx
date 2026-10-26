@@ -631,6 +631,7 @@ export const LogisticsScreen: React.FC<LogisticsScreenProps> = ({
         sourceStoreName={sourceStoreName}
         hubId={storeId}
         hubType="store"
+        topInset={storeMainContentPaddingTop()}
         onBack={() => {
           setShowReceiveItems(false);
           setReceiveItemsData(null);
@@ -642,7 +643,12 @@ export const LogisticsScreen: React.FC<LogisticsScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <LogisticsHeader activeTab={activeTab} onTabChange={setActiveTab} />
+      <LogisticsHeader
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onRefresh={refreshTrips}
+        refreshing={loading}
+      />
       <View style={styles.filterRow}>
         <TextInput
           style={styles.filterInput}

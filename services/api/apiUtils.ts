@@ -3,15 +3,15 @@ import axios from "axios";
 import * as SecureStore from "@/lib/secureStorage";
 
 const TRANSPORT_ERROR_MESSAGES: Record<string, string> = {
-  "400045": "Món đồ không ở cửa hàng nguồn của chuyến",
-  "400046": "Món đồ đã nằm trên một chuyến khác",
+  "400045": "Món không ở cửa hàng này. Hãy tải lại danh sách.",
+  "400046": "Món đã nằm trên một chuyến.",
   "400047": "Không thể chuyển trạng thái món đồ như vậy",
-  "400048": "Món đồ không đủ điều kiện cho chuyến này",
+  "400048": "Trạng thái hoặc mẻ giặt không cho đi hướng này.",
   "400049": "Thao tác không hợp lệ với trạng thái chuyến hiện tại",
-  "400050": "Chuyến phải đi giữa cửa hàng và xưởng",
-  "400051": "Còn món chưa nhận và chưa khai báo thất lạc",
-  "400052": "Chuyến chưa có món đồ",
-  "400053": "Đơn đã huỷ hoặc bị từ chối, không thể vận chuyển",
+  "400050": "Điểm đến sai loại cửa hàng.",
+  "400051": "Còn mã chưa nhận. Xác nhận thất lạc trước khi hoàn tất.",
+  "400052": "Chưa chọn món nào.",
+  "400053": "Đơn đã huỷ hoặc bị từ chối. Bỏ thẻ này.",
 };
 
 export function extractApiErrorCode(error: unknown): string {

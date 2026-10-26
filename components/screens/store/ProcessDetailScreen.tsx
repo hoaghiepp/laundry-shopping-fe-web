@@ -16,10 +16,14 @@ import { AddressLocation, goshipService } from "@/services/api/goshipService";
 import { logisticService } from "@/services/api/logisticService";
 import { useOrderStream } from "@/hooks/useOrderStream";
 import { Order, orderService } from "@/services/api/orderService";
+import { staffOrderService } from "@/services/api/staffOrderService";
+import { isStorePaymentConfirm } from "@/components/orders/utils/orderUtils";
 import { storeService } from "@/services/api/storeService";
 import { formatCurrencyVND } from "@/utils/format";
 import {
   buildOrderReceiptPdf,
+  buildOrderWithItemQrPdf,
+  buildQrTagsPdf,
   resolveOrderReceiptOptions,
   saveOrDownloadReceiptPdf,
 } from "@/utils/orderReceiptPdf";
@@ -27,8 +31,10 @@ import {
   garmentsForOrderItem,
   groupLinesByParent,
   lineAmount,
+  orderItemLabel,
   parentIdOf,
-  serviceLineStatusLabel
+  pieceLines,
+  serviceLineStatusLabel,
 } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useEffect, useState } from "react";
@@ -54,6 +60,27 @@ interface ProcessDetailScreenProps {
   onReturnWithStoreTransport?: () => void;
 }
 
+function trackingCodesForLine(item: { id?: string }, garments: any[]): string[] {
+  const seen = new Set<string>();
+  const codes: string[] = [];
+  for (const garment of garmentsForOrderItem(garments, String(item.id || ""))) {
+    const code = String(garment?.barcode || "").trim();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    codes.push(code);
+  }
+  return codes;
+}
+
+function itemQrTags(items: any[], garments: any[]): { heading: string; code: string }[] {
+  return pieceLines(items).flatMap((item) =>
+    trackingCodesForLine(item, garments).map((code) => ({
+      heading: orderItemLabel(item),
+      code,
+    }))
+  );
+}
+
 export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   order: initialOrder,
   storeId,
@@ -71,10 +98,13 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     new Set(),
   );
   const [confirmingPayment, setConfirmingPayment] = useState(false);
+  const [confirmingForCustomer, setConfirmingForCustomer] = useState(false);
+  const [hideConfirmForCustomer, setHideConfirmForCustomer] = useState(false);
 
   const [retailItems, setRetailItems] = useState<any[]>([]);
   const [serviceItems, setServiceItems] = useState<any[]>([]);
   const [garments, setGarments] = useState<any[]>([]);
+  const [printingQr, setPrintingQr] = useState(false);
   const [serviceFee, setServiceFee] = useState<string>("");
   const [serviceFeeDisplay, setServiceFeeDisplay] = useState<string>("");
   const [isChangesConfirmed, setIsChangesConfirmed] = useState(false);
@@ -556,6 +586,65 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     }
   };
 
+  const printQrTags = async (
+    tags: { heading: string; code: string }[],
+    fileName: string
+  ) => {
+    const ready = tags.filter((tag) => tag.code.trim());
+    if (ready.length === 0) {
+      compatAlert("Chưa có mã", "Món này chưa có mã để in QR.");
+      return;
+    }
+    setPrintingQr(true);
+    try {
+      const pdfBytes = await buildQrTagsPdf(ready);
+      await saveOrDownloadReceiptPdf(pdfBytes, fileName);
+      if (Platform.OS === "web") {
+        compatAlert("Thành công", `Đã tải file PDF: ${fileName}`);
+      }
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Không thể tạo QR.";
+      compatAlert("Lỗi", message);
+    } finally {
+      setPrintingQr(false);
+    }
+  };
+
+  const printAllItemQr = async () => {
+    const order = orderInfo ?? initialOrder;
+    const orderCode = order.code?.trim();
+    if (!orderCode) {
+      compatAlert("Lỗi", "Không tìm thấy mã đơn hàng");
+      return;
+    }
+    setPrintingQr(true);
+    try {
+      const receiptOptions = await resolveOrderReceiptOptions(storeId);
+      const pdfBytes = await buildOrderWithItemQrPdf(
+        order,
+        itemQrTags(serviceItems, garments),
+        receiptOptions
+      );
+      const safeCode = orderCode.replace(/[^\w.-]+/g, "_");
+      const fileName = `QR_${safeCode}.pdf`;
+      await saveOrDownloadReceiptPdf(pdfBytes, fileName);
+      if (Platform.OS === "web") {
+        compatAlert("Thành công", `Đã tải file PDF: ${fileName}`);
+      }
+    } catch (error: unknown) {
+      const message =
+        error instanceof Error ? error.message : "Không thể tạo QR.";
+      compatAlert("Lỗi", message);
+    } finally {
+      setPrintingQr(false);
+    }
+  };
+
+  const pieceIds = new Set(
+    pieceLines(serviceItems).map((item) => String(item.id || ""))
+  );
+
   const handleComplete = () => {
     compatAlert(
       "Hoàn tất",
@@ -740,38 +829,41 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         }
       }
 
-      // Add goods additional_fee if confirmed
-      if (
-        isGoodsFeeConfirmed &&
-        goodsAdditionalFee &&
-        goodsAdditionalFee !== ""
-      ) {
-        const feeValue = parseFloat(goodsAdditionalFee);
-        if (!isNaN(feeValue) && feeValue > 0) {
-          requestBody.product_additional_fee = feeValue;
-        }
+      // A blank or unchecked additional fee is 0. Both fees at 0 skip customer confirm.
+      const additionalFee = (raw: string, confirmed: boolean): number => {
+        if (!confirmed || raw.trim() === "") return 0;
+        const feeValue = parseFloat(raw);
+        if (!Number.isFinite(feeValue) || feeValue <= 0) return 0;
+        return feeValue;
+      };
+      const productAdditionalFee = additionalFee(
+        goodsAdditionalFee,
+        isGoodsFeeConfirmed
+      );
+      const serviceAdditionalFeeAmount = additionalFee(
+        serviceAdditionalFee,
+        isServiceFeeConfirmed
+      );
+      if (productAdditionalFee > 0) {
+        requestBody.product_additional_fee = productAdditionalFee;
+      }
+      if (serviceAdditionalFeeAmount > 0) {
+        requestBody.service_additional_fee = serviceAdditionalFeeAmount;
       }
 
-      // Add service additional_fee if confirmed
-      if (
-        isServiceFeeConfirmed &&
-        serviceAdditionalFee &&
-        serviceAdditionalFee !== ""
-      ) {
-        const feeValue = parseFloat(serviceAdditionalFee);
-        if (!isNaN(feeValue) && feeValue > 0) {
-          requestBody.service_additional_fee = feeValue;
-        }
-      }
-
-      // Call adjustOrder API
       console.log("handleConfirm - requestBody", initialOrder.id, requestBody);
       await orderService.adjustOrder(initialOrder.id, requestBody);
 
-      // Refresh order data to get updated status from API
       await fetchOrderDetails();
 
-      compatAlert("Thành công", "Đã báo giá thành công");
+      const skipsCustomerConfirm =
+        productAdditionalFee === 0 && serviceAdditionalFeeAmount === 0;
+      compatAlert(
+        "Thành công",
+        skipsCustomerConfirm
+          ? "Không phát sinh phí. Đơn chuyển sang chờ cửa hàng xác nhận tiền."
+          : "Đã gửi báo giá. Chờ khách hàng xác nhận phí phát sinh."
+      );
     } catch (error) {
       compatAlert("Lỗi", "Không thể xử lí đơn hàng");
       console.error("Error adjusting order:", error);
@@ -785,6 +877,60 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   };
 
   const isSplitShipment = orderInfo?.is_split_shipment ?? true;
+  const awaitingStoreCash = isStorePaymentConfirm(orderInfo?.payment_status);
+  const awaitingCustomerConfirm =
+    orderInfo?.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM;
+  const showConfirmForCustomer =
+    !hideConfirmForCustomer &&
+    orderInfo?.created_by_store === true &&
+    (orderInfo.payment_status === PaymentStatus.UNPAID ||
+      orderInfo.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM);
+
+  const handleConfirmForCustomer = () => {
+    compatAlert(
+      "Xác nhận thay khách",
+      "Xác nhận đơn này thay cho khách hàng?",
+      [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: "Xác nhận",
+          onPress: async () => {
+            try {
+              setConfirmingForCustomer(true);
+              await staffOrderService.confirmForCustomer(orderInfo.id);
+              await fetchOrderDetails();
+              compatAlert("Thành công", "Đã xác nhận thay khách.");
+            } catch (error: any) {
+              const raw = String(error?.message || "").toLowerCase();
+              if (
+                raw.includes("only a store-created order") ||
+                raw.includes("order is already paid")
+              ) {
+                setHideConfirmForCustomer(true);
+                await fetchOrderDetails();
+                return;
+              }
+              if (raw.includes("not awaiting customer confirmation")) {
+                await fetchOrderDetails();
+                compatAlert("Thành công", "Đơn đã được xác nhận.");
+                return;
+              }
+              if (raw.includes("staff is not in this store")) {
+                compatAlert("Lỗi", "Bạn không thuộc cửa hàng của sản phẩm này");
+                return;
+              }
+              compatAlert(
+                "Lỗi",
+                error?.message || "Không thể xác nhận thay khách"
+              );
+            } finally {
+              setConfirmingForCustomer(false);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // Handle return via store transport: confirm & mark order as FINISHED
   // Handle return with shipping - open modal
@@ -1206,9 +1352,14 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                 {getOrderStatusText()}
               </Text>
             </View>
-            {orderInfo?.payment_status === PaymentStatus.WAITING_CONFIRM && (
+            {awaitingStoreCash && (
               <View style={styles.paymentWaitingBadge}>
                 <Text style={styles.paymentWaitingBadgeText}>Chờ xác nhận tiền</Text>
+              </View>
+            )}
+            {awaitingCustomerConfirm && (
+              <View style={styles.paymentWaitingBadge}>
+                <Text style={styles.paymentWaitingBadgeText}>Chờ khách xác nhận</Text>
               </View>
             )}
             {orderInfo?.payment_status === PaymentStatus.PAID && (
@@ -1244,7 +1395,23 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             onCallPress={handleCallCustomer}
           />
 
-          {orderInfo?.payment_status === PaymentStatus.WAITING_CONFIRM && (
+          {showConfirmForCustomer && (
+            <TouchableOpacity
+              style={[
+                styles.confirmPaymentButton,
+                confirmingForCustomer && styles.confirmPaymentButtonDisabled,
+              ]}
+              disabled={confirmingForCustomer}
+              activeOpacity={0.8}
+              onPress={handleConfirmForCustomer}
+            >
+              <Text style={styles.confirmPaymentButtonText}>
+                {confirmingForCustomer ? "Đang xác nhận..." : "Xác nhận thay khách"}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {awaitingStoreCash && (
             <TouchableOpacity
               style={[
                 styles.confirmPaymentButton,
@@ -1823,6 +1990,29 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
                       {/* <Text style={styles.serviceAdjustedPrice}>
                         Thành tiền: {formatCurrencyVND(lineAmount(item))}
                       </Text> */}
+                      {pieceIds.has(String(item.id || "")) ? (
+                        <TouchableOpacity
+                          style={[styles.qrButton, printingQr && styles.printAllQrOff]}
+                          onPress={() => {
+                            const codes = trackingCodesForLine(item, garments);
+                            const heading = orderItemLabel(item);
+                            const safe = (codes[0] || item.id || "mon").replace(
+                              /[^\w.-]+/g,
+                              "_"
+                            );
+                            void printQrTags(
+                              codes.map((code) => ({ heading, code })),
+                              `QR_${safe}.pdf`
+                            );
+                          }}
+                          disabled={printingQr}
+                          accessibilityRole="button"
+                          accessibilityLabel={`In QR ${item.product_name || item.name || "món"}`}
+                        >
+                          <FontAwesome5 name="qrcode" size={14} color="#2563EB" />
+                          <Text style={styles.qrButtonText}>In QR</Text>
+                        </TouchableOpacity>
+                      ) : null}
                     </View>
                   ))}
                 <Text style={styles.serviceAdjustedPrice}>
@@ -1986,6 +2176,25 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
               style={{ marginRight: 8 }}
             />
             <Text style={styles.printTagButtonText}>In tem</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.printAllQr, printingQr && styles.printAllQrOff]}
+            onPress={() => void printAllItemQr()}
+            disabled={printingQr}
+            accessibilityRole="button"
+            accessibilityLabel="In tất cả"
+          >
+            {printingQr ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <FontAwesome5
+                name="qrcode"
+                size={14}
+                color="#FFFFFF"
+                style={{ marginRight: 8 }}
+              />
+            )}
+            <Text style={styles.printAllQrText}>In tất cả</Text>
           </TouchableOpacity>
         </View>
 
@@ -3054,6 +3263,44 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "600",
     color: "#374151",
+  },
+  printAllQr: {
+    minHeight: 44,
+    marginTop: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: "#2563EB",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  printAllQrOff: {
+    opacity: 0.6,
+  },
+  printAllQrText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  qrButton: {
+    minHeight: 44,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#2563EB",
+    backgroundColor: "#FFFFFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  qrButtonText: {
+    color: "#2563EB",
+    fontSize: 14,
+    fontWeight: "600",
   },
   serviceTotalContainer: {
     backgroundColor: "#F0FDF4",

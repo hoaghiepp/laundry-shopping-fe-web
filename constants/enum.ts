@@ -33,8 +33,12 @@ export enum OrderStatus {
 
 export enum PaymentStatus {
   UNPAID = "UNPAID",
+  /** Older rows only. New bill payment does not set this. confirm-payment still accepts it. */
   WAITING_CONFIRM = "WAITING_CONFIRM",
+  /** Older rows only. New bill payment does not set this. */
   PARTIAL_PAID = "PARTIAL_PAID",
+  WAITING_CUSTOMER_CONFIRM = "WAITING_CUSTOMER_CONFIRM",
+  WAITING_STORE_CONFIRM = "WAITING_STORE_CONFIRM",
   PAID = "PAID",
   REFUNDED = "REFUNDED",
 }

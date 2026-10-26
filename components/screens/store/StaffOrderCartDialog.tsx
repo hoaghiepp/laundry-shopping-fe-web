@@ -27,6 +27,7 @@ export interface StaffOrderCartItem {
   cartItemId: string | null;
   parentId: string | null;
   displayName: string;
+  garmentName?: string;
   note?: string;
 }
 
@@ -141,7 +142,10 @@ const SubItemLine = ({
 
   return (
     <View style={lineStyles.subRow}>
-      <TruncatedName text={entry.displayName || entry.product.name} style={lineStyles.subName} />
+      <TruncatedName
+        text={entry.garmentName?.trim() || entry.displayName || entry.product.name}
+        style={lineStyles.subName}
+      />
       {entry.note ? <TruncatedName text={entry.note} style={lineStyles.subNote} /> : null}
       <Text style={lineStyles.subPrice}>{formatCurrencyVND(lineTotal)}</Text>
       {loading ? (
@@ -179,6 +183,7 @@ const CartLine = ({
   onIncrease,
   onDecrease,
   onRemove,
+  footer,
 }: {
   entry: StaffOrderCartItem;
   loading: boolean;
@@ -189,6 +194,7 @@ const CartLine = ({
   onIncrease: () => void;
   onDecrease: () => void;
   onRemove: () => void;
+  footer?: React.ReactNode;
 }) => {
   const { product, quantity } = entry;
   const prepLabel = getPreparationLabel(product);
@@ -197,6 +203,7 @@ const CartLine = ({
 
   return (
     <View style={lineStyles.card}>
+      <View style={lineStyles.top}>
       <View style={lineStyles.thumbWrap}>
         {product.thumbnail_url ? (
           <Image source={{ uri: product.thumbnail_url }} style={lineStyles.thumb} resizeMode="cover" />
@@ -254,7 +261,9 @@ const CartLine = ({
         ) : (
           <View style={lineStyles.qtyRow}>
             {locked ? (
-              <Text style={lineStyles.qty}>{quantity}</Text>
+              <TouchableOpacity style={lineStyles.qtyBtn} onPress={onRemove} activeOpacity={0.75}>
+                <FontAwesome5 name="trash-alt" size={11} color="#DC2626" />
+              </TouchableOpacity>
             ) : (
               <>
                 <TouchableOpacity
@@ -274,14 +283,11 @@ const CartLine = ({
                 </TouchableOpacity>
               </>
             )}
-            {locked && (
-              <TouchableOpacity style={lineStyles.qtyBtn} onPress={onRemove} activeOpacity={0.75}>
-                <FontAwesome5 name="trash-alt" size={11} color="#DC2626" />
-              </TouchableOpacity>
-            )}
           </View>
         )}
       </View>
+      </View>
+      {footer}
     </View>
   );
 };
@@ -390,19 +396,21 @@ export const StaffOrderCartDialog: React.FC<StaffOrderCartDialogProps> = ({
                         onIncrease={() => onIncrease(parent)}
                         onDecrease={() => onDecrease(parent)}
                         onRemove={() => onRemove(parent)}
+                        footer={
+                          hasChildren && expanded
+                            ? group.children.map((child) => (
+                                <SubItemLine
+                                  key={child.cartItemId || `${parentKey}-${child.displayName}`}
+                                  entry={child}
+                                  loading={!!itemLoading[child.cartItemId || child.product.id]}
+                                  onIncrease={() => onIncrease(child)}
+                                  onDecrease={() => onDecrease(child)}
+                                  onRemove={() => onRemove(child)}
+                                />
+                              ))
+                            : null
+                        }
                       />
-                      {hasChildren && expanded
-                        ? group.children.map((child) => (
-                            <SubItemLine
-                              key={child.cartItemId || `${parentKey}-${child.displayName}`}
-                              entry={child}
-                              loading={!!itemLoading[child.cartItemId || child.product.id]}
-                              onIncrease={() => onIncrease(child)}
-                              onDecrease={() => onDecrease(child)}
-                              onRemove={() => onRemove(child)}
-                            />
-                          ))
-                        : null}
                     </View>
                   );
                 })}
@@ -436,15 +444,18 @@ export const StaffOrderCartDialog: React.FC<StaffOrderCartDialogProps> = ({
 
 const lineStyles = StyleSheet.create({
   card: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 12,
     backgroundColor: "#FFFFFF",
     borderRadius: 12,
     borderWidth: 1,
     borderColor: "#E5E7EB",
     padding: 12,
     marginBottom: 10,
+    gap: 8,
+  },
+  top: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
   },
   thumbWrap: {
     width: 80,
@@ -478,8 +489,8 @@ const lineStyles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginLeft: 28,
-    marginBottom: 8,
+    marginLeft: 0,
+    marginBottom: 0,
     paddingVertical: 6,
     paddingHorizontal: 10,
     backgroundColor: "#F8FAFC",

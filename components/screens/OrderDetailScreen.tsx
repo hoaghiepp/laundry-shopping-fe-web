@@ -15,11 +15,26 @@ import {
 } from "@/services/api/customerService";
 import { useOrderStream } from "@/hooks/useOrderStream";
 import { Order, orderService } from "@/services/api/orderService";
+import { isStorePaymentConfirm } from "@/components/orders/utils/orderUtils";
 import { packageService } from "@/services/api/packageProductService";
 import { VariantGroupLabel } from "@/components/products/VariantGroupLabel";
 import { formatCurrencyVND } from "@/utils/format";
+import {
+  buildOrderWithItemQrPdf,
+  buildQrTagsPdf,
+  resolveOrderReceiptOptions,
+  saveOrDownloadReceiptPdf,
+} from "@/utils/orderReceiptPdf";
+import { collectPages } from "@/utils/transportGroups";
 import { variantGroupOf } from "@/utils/variantGroup";
-import { groupLinesByParent, lineAmount } from "@/utils/serviceLines";
+import { logisticService } from "@/services/api/logisticService";
+import {
+  garmentsForOrderItem,
+  groupLinesByParent,
+  lineAmount,
+  orderItemLabel,
+  pieceLines,
+} from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as SecureStore from "@/lib/secureStorage";
@@ -30,6 +45,7 @@ import {
   BackHandler,
   Dimensions,
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -153,6 +169,9 @@ const getPaymentStatusDisplay = (status: PaymentStatus) => {
   switch (status) {
     case PaymentStatus.UNPAID:
       return { text: "Chưa thanh toán", color: "#B91C1C", bg: "#FEE2E2" };
+    case PaymentStatus.WAITING_CUSTOMER_CONFIRM:
+      return { text: "Chờ khách xác nhận", color: "#1D4ED8", bg: "#DBEAFE" };
+    case PaymentStatus.WAITING_STORE_CONFIRM:
     case PaymentStatus.WAITING_CONFIRM:
       return { text: "Chờ xác nhận tiền", color: "#92400E", bg: "#FEF3C7" };
     case PaymentStatus.PARTIAL_PAID:
@@ -236,6 +255,31 @@ const generateTimelineEvents = (order: OrderDetail): TimelineEvent[] => {
   return events;
 };
 
+function trackingCodesForLine(item: { id?: string }, garments: any[]): string[] {
+  const seen = new Set<string>();
+  const codes: string[] = [];
+  for (const garment of garmentsForOrderItem(garments, String(item.id || ""))) {
+    const code = String(garment?.barcode || "").trim();
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    codes.push(code);
+  }
+  return codes;
+}
+
+function safeFilePart(value: string): string {
+  return value.replace(/[^\w.-]+/g, "_") || "qr";
+}
+
+function itemQrTags(items: any[], garments: any[]): { heading: string; code: string }[] {
+  return pieceLines(items).flatMap((item) =>
+    trackingCodesForLine(item, garments).map((code) => ({
+      heading: orderItemLabel(item),
+      code,
+    }))
+  );
+}
+
 export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
   order: initialOrder,
   onBack,
@@ -263,6 +307,8 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
   const [promotionLoading, setPromotionLoading] = useState(false);
   const [customerPackages, setCustomerPackages] = useState<any[]>([]);
   const [packagesLoading, setPackagesLoading] = useState(false);
+  const [garments, setGarments] = useState<any[]>([]);
+  const [printingQr, setPrintingQr] = useState(false);
   const [selectedPackages, setSelectedPackages] = useState<any[]>([]);
   const [isPackagesExpanded, setIsPackagesExpanded] = useState(false);
 
@@ -461,6 +507,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
     );
     if (
       orderDetail.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION &&
+      orderDetail.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM &&
       !hasPendingIncidents
     ) {
       fetchSavedPromotions();
@@ -470,7 +517,36 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
       setSelectedPackages([]);
       setSelectedPromotion(null);
     }
-  }, [orderDetail.status, incidents.length]);
+  }, [orderDetail.status, orderDetail.payment_status, incidents.length]);
+
+  useEffect(() => {
+    const code = orderDetail.code?.trim();
+    if (!code) {
+      setGarments([]);
+      return;
+    }
+    let cancelled = false;
+    collectPages(async (page, size) => {
+      const response = await logisticService.searchTrackingItems(
+        { order_code: code },
+        { page, size }
+      );
+      const total = Number(response?.meta?.total);
+      return {
+        rows: response?.data || [],
+        total: Number.isFinite(total) ? total : undefined,
+      };
+    })
+      .then((rows) => {
+        if (!cancelled) setGarments(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setGarments([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orderDetail.code]);
 
   const timelineEvents = generateTimelineEvents(orderDetail);
   const statusDisplay = getStatusDisplay(orderDetail.status);
@@ -479,6 +555,9 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
   );
   const isNeedCustomerConfirmation =
     orderDetail.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION;
+  const showCustomerConfirmActions =
+    isNeedCustomerConfirmation &&
+    orderDetail.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM;
   const isException = orderDetail.status === OrderStatus.CUSTOMER_REJECTED;
 
   // Show only latest status when collapsed
@@ -501,6 +580,63 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
     ...group.children.map((child) => ({ item: child, nested: true })),
   ]);
   const serviceSubtotal = serviceItems.reduce((sum, item) => sum + lineAmount(item), 0);
+
+  const pieceIds = new Set(pieceLines(serviceItems).map((item) => String(item.id || "")));
+
+  const printQrTags = async (
+    tags: { heading: string; code: string }[],
+    fileName: string
+  ) => {
+    const ready = tags.filter((tag) => tag.code.trim());
+    if (ready.length === 0) {
+      Alert.alert("Chưa có mã", "Món này chưa có mã để in QR.");
+      return;
+    }
+    setPrintingQr(true);
+    try {
+      const pdfBytes = await buildQrTagsPdf(ready);
+      await saveOrDownloadReceiptPdf(pdfBytes, fileName);
+      if (Platform.OS === "web") {
+        Alert.alert("Thành công", `Đã tải file PDF: ${fileName}`);
+      }
+    } catch (error) {
+      Alert.alert(
+        "Lỗi",
+        error instanceof Error ? error.message : "Không thể tạo QR."
+      );
+    } finally {
+      setPrintingQr(false);
+    }
+  };
+
+  const printAllItemQr = async () => {
+    const orderCode = orderDetail.code?.trim();
+    if (!orderCode) {
+      Alert.alert("Lỗi", "Không tìm thấy mã đơn hàng");
+      return;
+    }
+    setPrintingQr(true);
+    try {
+      const options = await resolveOrderReceiptOptions(orderDetail.hub_id);
+      const pdfBytes = await buildOrderWithItemQrPdf(
+        orderDetail,
+        itemQrTags(serviceItems, garments),
+        options
+      );
+      const fileName = `QR_${safeFilePart(orderCode)}.pdf`;
+      await saveOrDownloadReceiptPdf(pdfBytes, fileName);
+      if (Platform.OS === "web") {
+        Alert.alert("Thành công", `Đã tải file PDF: ${fileName}`);
+      }
+    } catch (error) {
+      Alert.alert(
+        "Lỗi",
+        error instanceof Error ? error.message : "Không thể tạo QR."
+      );
+    } finally {
+      setPrintingQr(false);
+    }
+  };
 
   // Calculate package deduction based on selected packages
   const calculatePackageDeduction = (): number => {
@@ -628,7 +764,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
 
       Alert.alert(
         "Đã xác nhận hóa đơn",
-        "Đơn chuyển sang đang xử lý. Cửa hàng sẽ xác nhận khi nhận đủ tiền mặt.",
+        "Cửa hàng sẽ xác nhận khi nhận đủ tiền mặt.",
         [
           {
             text: "OK",
@@ -919,6 +1055,20 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+        <TouchableOpacity
+          style={[styles.printAllQr, printingQr && styles.printAllQrOff]}
+          onPress={() => void printAllItemQr()}
+          disabled={printingQr}
+          accessibilityRole="button"
+          accessibilityLabel="In tất cả"
+        >
+          {printingQr ? (
+            <ActivityIndicator color="#FFFFFF" size="small" />
+          ) : (
+            <FontAwesome5 name="qrcode" size={14} color="#FFFFFF" />
+          )}
+          <Text style={styles.printAllQrText}>In tất cả</Text>
+        </TouchableOpacity>
         {/* Order Status Card */}
         <View style={styles.statusCard}>
           <View style={styles.statusHeader}>
@@ -956,7 +1106,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
             <Text style={styles.orderDate}>
             Ngày đặt: {formatDate(orderDetail.created_date)}
           </Text>
-          {orderDetail.payment_status === PaymentStatus.WAITING_CONFIRM && (
+          {isStorePaymentConfirm(orderDetail.payment_status) && (
             <Text style={styles.paymentHint}>
               Cửa hàng chưa xác nhận đã nhận tiền mặt.
             </Text>
@@ -1215,6 +1365,32 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
                       </Text>
                     </View>
                   </View>
+                  {pieceIds.has(String(item.id || "")) && (
+                    <View>
+                      {trackingCodesForLine(item, garments).map((code) => (
+                        <Text key={code} style={styles.qrCodeText}>
+                          Mã: {code}
+                        </Text>
+                      ))}
+                      <TouchableOpacity
+                        style={[styles.qrButton, printingQr && styles.printAllQrOff]}
+                        onPress={() => {
+                          const codes = trackingCodesForLine(item, garments);
+                          const heading = orderItemLabel(item);
+                          void printQrTags(
+                            codes.map((code) => ({ heading, code })),
+                            `QR_${safeFilePart(codes[0] || item.id || "mon")}.pdf`
+                          );
+                        }}
+                        disabled={printingQr}
+                        accessibilityRole="button"
+                        accessibilityLabel={`In QR ${item.product_name || "món"}`}
+                      >
+                        <FontAwesome5 name="qrcode" size={14} color="#2563EB" />
+                        <Text style={styles.qrButtonText}>In QR</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
               ))}
               {serviceItems.length > 0 && (
@@ -1535,7 +1711,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
         )}
 
         {/* Package and Promotion Selection for NEED_CUSTOMER_CONFIRMATION (excluding incident cases) */}
-        {isNeedCustomerConfirmation &&
+        {showCustomerConfirmActions &&
           !incidents.some((i) => i.status === IncidentStatus.CREATED) && (
             <>
               {/* Package Selection */}
@@ -1713,7 +1889,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
           )}
 
         {/* Confirmation section for NEED_CUSTOMER_CONFIRMATION */}
-        {isNeedCustomerConfirmation && onContinue && onReturn && (
+        {showCustomerConfirmActions && onContinue && onReturn && (
           <View style={styles.confirmCard}>
             <View style={styles.confirmHeader}>
               <FontAwesome5 name="info-circle" size={14} color="#2563EB" />
@@ -2271,6 +2447,50 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     color: "#1F2937",
     flex: 1,
+  },
+  printAllQr: {
+    minHeight: 44,
+    marginBottom: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: "#2563EB",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  printAllQrOff: {
+    opacity: 0.6,
+  },
+  printAllQrText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  qrButton: {
+    minHeight: 44,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#2563EB",
+    backgroundColor: "#FFFFFF",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    ...(Platform.OS === "web" ? { cursor: "pointer" as const } : {}),
+  },
+  qrButtonText: {
+    color: "#2563EB",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  qrCodeText: {
+    marginTop: 4,
+    fontSize: 12,
+    color: "#475569",
   },
   packageBadge: {
     backgroundColor: "#DBEAFE",

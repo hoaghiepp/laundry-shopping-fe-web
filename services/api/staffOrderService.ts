@@ -1,9 +1,40 @@
 import { API_BASE_URL } from "@/constants/api";
 import { ProductStatus } from "@/constants/enum";
-import { customerOrderAxios } from "@/lib/apiClient";
+import { customerOrderAxios, userAxios } from "@/lib/apiClient";
 import { extractApiErrorMessage } from "./apiUtils";
 import { ChangePasswordRequest } from "./authService";
-import { OrderCheckoutReq } from "./orderService";
+
+export interface StaffCheckoutSubItem {
+  name: string;
+  quantity: number;
+  note?: string;
+}
+
+export interface StaffCheckoutItem {
+  product_id: string;
+  quantity: number;
+  note?: string;
+  sub_items?: StaffCheckoutSubItem[];
+}
+
+export interface StaffOrderCheckoutReq {
+  phone_number: string;
+  full_name: string;
+  items: StaffCheckoutItem[];
+  shipping_full_name?: string;
+  shipping_phone_number?: string;
+  shipping_address_detail?: string;
+  shipping_ward?: string;
+  shipping_ward_id?: string;
+  shipping_district?: string;
+  shipping_district_id?: string;
+  shipping_province?: string;
+  shipping_province_id?: string;
+  is_need_shipment?: boolean;
+  is_split_shipment?: boolean;
+  same_day_service?: boolean;
+  note?: string;
+}
 
 export const staffOrderService = {
   searchProducts: async (
@@ -26,79 +57,34 @@ export const staffOrderService = {
     }
   },
 
-  addToCart: async (
-    productId: string,
-    quantity: number,
-    subItems?: { name: string; quantity: number; note?: string }[],
-    note?: string
-  ): Promise<any> => {
+  searchCustomers: async (keyword: string, page = 0, size = 10): Promise<any> => {
     try {
-      const body: Record<string, unknown> = {
-        product_id: productId,
-        quantity,
-      };
-      if (note) body.note = note;
-      if (subItems && subItems.length > 0) body.sub_items = subItems;
-      const res = await customerOrderAxios.post(`${API_BASE_URL}/v1/customer/cart/items`, body);
-      return res.data;
-    } catch (error) {
-      throw new Error(extractApiErrorMessage(error, "Add to cart failed"));
-    }
-  },
-
-  updateCartItem: async (itemId: string, quantity: number): Promise<any> => {
-    try {
-      const res = await customerOrderAxios.put(
-        `${API_BASE_URL}/v1/customer/cart/items/${itemId}`,
-        { quantity }
+      const res = await userAxios.post(
+        "/v1/staff/customers/search",
+        { keyword },
+        { params: { page, size, sort: "createdDate,desc" } }
       );
       return res.data;
     } catch (error) {
-      throw new Error(extractApiErrorMessage(error, "Update cart item failed"));
+      throw new Error(extractApiErrorMessage(error, "Search customers failed"));
     }
   },
 
-  removeCartItem: async (itemId: string): Promise<any> => {
+  staffCheckout: async (req: StaffOrderCheckoutReq): Promise<any> => {
     try {
-      const res = await customerOrderAxios.delete(
-        `${API_BASE_URL}/v1/customer/cart/items/${itemId}`
-      );
-      return res.data;
-    } catch (error) {
-      throw new Error(extractApiErrorMessage(error, "Remove cart item failed"));
-    }
-  },
-
-  checkout: async (req: OrderCheckoutReq): Promise<any> => {
-    try {
-      const res = await customerOrderAxios.post(
-        `${API_BASE_URL}/v1/customer/orders/checkout`,
-        req
-      );
+      const res = await userAxios.post("/v1/staff/orders/checkout", req);
       return res.data;
     } catch (error) {
       throw new Error(extractApiErrorMessage(error, "Checkout failed"));
     }
   },
 
-  getCustomerCart: async (): Promise<any> => {
+  confirmForCustomer: async (orderId: string): Promise<any> => {
     try {
-      const res = await customerOrderAxios.get(`${API_BASE_URL}/v1/customer/cart`);
+      const res = await userAxios.put(`/v1/staff/orders/${orderId}/confirm-for-customer`);
       return res.data;
     } catch (error) {
-      throw new Error(extractApiErrorMessage(error, "Get cart failed"));
-    }
-  },
-
-  pay: async (orderId: string): Promise<any> => {
-    try {
-      const res = await customerOrderAxios.post(
-        `${API_BASE_URL}/v1/customer/orders/${orderId}/pay`,
-        {}
-      );
-      return res.data;
-    } catch (error) {
-      throw new Error(extractApiErrorMessage(error, "Submit payment failed"));
+      throw new Error(extractApiErrorMessage(error, "Confirm for customer failed"));
     }
   },
 

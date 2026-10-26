@@ -74,6 +74,13 @@ export function groupLinesByParent<T>(lines: T[]): ParentChildGroup<T>[] {
   return groups;
 }
 
+/** Lines that are physical pieces: children when a parent has them, otherwise the line itself. */
+export function pieceLines<T>(lines: T[]): T[] {
+  return groupLinesByParent(lines).flatMap((group) =>
+    group.children.length > 0 ? group.children : [group.parent]
+  );
+}
+
 export function subItemQuantitySum(items: { quantity: number }[]): number {
   return items.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
 }

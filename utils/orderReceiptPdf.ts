@@ -253,10 +253,17 @@ function drawCenterAt(
   return y + gapAfter;
 }
 
-/**
- * Renders one order receipt into an existing jsPDF doc starting at ctx.y.
- * Returns the y position after this receipt block.
- */
+/** PNG data URL for one QR, from the same qrserver image used by In tem. */
+async function loadQrDataUrl(code: string): Promise<string> {
+  const qrUrl = await qrService.generateQR({ data: code, size: "160x160" });
+  const qrRes = await fetch(qrUrl);
+  if (!qrRes.ok) {
+    throw new Error("Khong tai duoc hinh QR");
+  }
+  const qrBytes = new Uint8Array(await qrRes.arrayBuffer());
+  return `data:image/png;base64,${uint8ArrayToBase64(qrBytes)}`;
+}
+
 async function renderOrderReceiptIntoDoc(
   ctx: ReceiptCtx,
   order: Order,
@@ -267,13 +274,7 @@ async function renderOrderReceiptIntoDoc(
     throw new Error("Thieu ma don hang");
   }
 
-  const qrUrl = await qrService.generateQR({ data: code, size: "160x160" });
-  const qrRes = await fetch(qrUrl);
-  if (!qrRes.ok) {
-    throw new Error("Khong tai duoc hinh QR");
-  }
-  const qrBytes = new Uint8Array(await qrRes.arrayBuffer());
-  const qrDataUrl = `data:image/png;base64,${uint8ArrayToBase64(qrBytes)}`;
+  const qrDataUrl = await loadQrDataUrl(code);
 
   const storeName = stripToReceiptAscii(options?.storeName || "LAUNDRY PRO").toUpperCase();
 
@@ -348,6 +349,74 @@ export async function buildCombinedOrderReceiptsPdf(
     trimCurrentPageHeight(doc, endY);
   }
 
+  return new Uint8Array(doc.output("arraybuffer"));
+}
+
+export interface QrTagPage {
+  heading: string;
+  code: string;
+}
+
+function estimateTagHeightMm(): number {
+  return 8 + 16 + (RECEIPT_WIDTH_MM - 8) + 16;
+}
+
+async function renderQrTag(ctx: ReceiptCtx, tag: QrTagPage): Promise<number> {
+  const qrDataUrl = await loadQrDataUrl(tag.code);
+  ctx.y = contentStartY();
+  drawCenter(ctx, tag.heading, TITLE_SIZE, true, 3);
+  ensureSpace(ctx, QR_SIZE + mmToPt(14));
+  ctx.doc.addImage(qrDataUrl, "PNG", MARGIN, ctx.y, QR_SIZE, QR_SIZE);
+  ctx.y += QR_SIZE + mmToPt(2);
+  drawCenter(ctx, tag.code, TITLE_SIZE, true, 2);
+  return ctx.y;
+}
+
+/**
+ * Page 1 is the same order tag as In tem. Later pages are item QR tags, in the given order.
+ */
+export async function buildOrderWithItemQrPdf(
+  order: Order,
+  tags: QrTagPage[],
+  options?: OrderReceiptOptions
+): Promise<Uint8Array> {
+  if (!order.code?.trim()) {
+    throw new Error("Thieu ma don hang");
+  }
+  const startPageH = Math.max(MIN_PAGE_H, mmToPt(estimateReceiptHeightMm(order)));
+  const doc = new jsPDF({ unit: "pt", format: [PAGE_W, startPageH] });
+  const ctx: ReceiptCtx = { doc, y: contentStartY() };
+  const receiptEnd = await renderOrderReceiptIntoDoc(ctx, order, options);
+  trimCurrentPageHeight(doc, receiptEnd);
+
+  const itemTags = tags.filter((tag) => tag.code.trim());
+  const tagPageH = Math.max(MIN_PAGE_H, mmToPt(estimateTagHeightMm()));
+  for (const tag of itemTags) {
+    doc.addPage([PAGE_W, tagPageH]);
+    ctx.y = contentStartY();
+    const tagEnd = await renderQrTag(ctx, tag);
+    trimCurrentPageHeight(doc, tagEnd);
+  }
+  return new Uint8Array(doc.output("arraybuffer"));
+}
+
+/** One 80 mm page per code: heading, QR image, and the code text. */
+export async function buildQrTagsPdf(tags: QrTagPage[]): Promise<Uint8Array> {
+  const valid = tags.filter((tag) => tag.code.trim());
+  if (valid.length === 0) {
+    throw new Error("Khong co ma de in");
+  }
+  const pageH = Math.max(MIN_PAGE_H, mmToPt(estimateTagHeightMm()));
+  const doc = new jsPDF({ unit: "pt", format: [PAGE_W, pageH] });
+  const ctx: ReceiptCtx = { doc, y: contentStartY() };
+  for (let i = 0; i < valid.length; i++) {
+    if (i > 0) {
+      doc.addPage([PAGE_W, pageH]);
+      ctx.y = contentStartY();
+    }
+    const endY = await renderQrTag(ctx, valid[i]);
+    trimCurrentPageHeight(doc, endY);
+  }
   return new Uint8Array(doc.output("arraybuffer"));
 }
 
