@@ -37,7 +37,7 @@ import {
   serviceLineStatusLabel,
 } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -117,6 +117,10 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   const [isGoodsFeeConfirmed, setIsGoodsFeeConfirmed] = useState(true);
   const [isServiceFeeConfirmed, setIsServiceFeeConfirmed] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [manualDiscount, setManualDiscount] = useState<string>("0");
+  const [manualDiscountDisplay, setManualDiscountDisplay] = useState<string>("0");
+  // Last discount value received from the API, so a stream refresh does not wipe typing.
+  const syncedManualDiscountRef = useRef<string | null>(null);
 
   // Return shipping modal state
   const [showReturnShippingModal, setShowReturnShippingModal] = useState(false);
@@ -170,6 +174,19 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     const numericValue = text.replace(/\D/g, "");
     setServiceAdditionalFee(numericValue);
     setServiceAdditionalFeeDisplay(formatNumberWithSeparators(numericValue));
+  };
+
+  // Handle manual discount input change
+  const handleManualDiscountChange = (text: string) => {
+    const numericValue = text.replace(/\D/g, "");
+    setManualDiscount(numericValue === "" ? "0" : numericValue);
+    setManualDiscountDisplay(formatNumberWithSeparators(numericValue));
+  };
+
+  /** Current manual discount in VND — always sent on adjust, since omitting it resets to 0. */
+  const manualDiscountValue = (): number => {
+    const parsed = parseFloat(manualDiscount);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
   };
 
   // Handle goods fee confirmation toggle - only save value, no API call
@@ -484,6 +501,17 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         setIsServiceFeeConfirmed(true);
       }
     }
+
+    // Prefill staff discount; re-sync only when the API value actually changed so
+    // an order-stream refresh does not clobber what the staff is typing.
+    const discountFromOrder = String(
+      Math.floor(orderInfo?.manual_discount_amount ?? 0)
+    );
+    if (syncedManualDiscountRef.current !== discountFromOrder) {
+      syncedManualDiscountRef.current = discountFromOrder;
+      setManualDiscount(discountFromOrder);
+      setManualDiscountDisplay(formatNumberWithSeparators(discountFromOrder));
+    }
   }, [orderInfo]);
 
   const totalRetailPrice = retailItems.reduce((sum, item) => {
@@ -695,9 +723,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       updated_items: Array<{ order_item_id: string; quantity: number }>;
       new_items: Array<{ product_id: string; quantity: number }>;
       service_fee?: number;
+      manual_discount_amount: number;
     } = {
       updated_items: updatedItems,
       new_items: [], // Empty for now, can be extended later
+      // Full-replace body: always echo the current discount or it resets to 0.
+      manual_discount_amount: manualDiscountValue(),
     };
 
     // Add service_fee if provided
@@ -785,8 +816,19 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     return isGoodsFeeConfirmed;
   };
 
-  // Handle Báo giá - call adjust_order API
-  const handleConfirm = async () => {
+  // Handle Báo giá - warn first, then call adjust_order API
+  const handleConfirm = () => {
+    compatAlert(
+      "Gửi báo giá",
+      "Sau khi gửi, đơn sẽ chuyển sang chờ khách hàng xác nhận chi phí mới (kể cả khi chỉ thay đổi giảm giá). Tiếp tục?",
+      [
+        { text: "Hủy", style: "cancel" },
+        { text: "Gửi báo giá", onPress: () => void submitAdjust() },
+      ],
+    );
+  };
+
+  const submitAdjust = async () => {
     setIsConfirming(true);
     try {
       // Build updated_items from actualWeights for ALL service items
@@ -816,9 +858,12 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         service_fee?: number;
         product_additional_fee?: number;
         service_additional_fee?: number;
+        manual_discount_amount: number;
       } = {
         updated_items: updatedItems,
         new_items: [],
+        // Full-replace body: always echo the current discount or it resets to 0.
+        manual_discount_amount: manualDiscountValue(),
       };
 
       // Add service_fee if provided
@@ -852,17 +897,23 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       }
 
       console.log("handleConfirm - requestBody", initialOrder.id, requestBody);
+      // Compare before the refresh below re-syncs the ref from the new order.
+      const discountChanged =
+        String(requestBody.manual_discount_amount) !==
+        syncedManualDiscountRef.current;
       await orderService.adjustOrder(initialOrder.id, requestBody);
 
       await fetchOrderDetails();
 
       const skipsCustomerConfirm =
-        productAdditionalFee === 0 && serviceAdditionalFeeAmount === 0;
+        productAdditionalFee === 0 &&
+        serviceAdditionalFeeAmount === 0 &&
+        !discountChanged;
       compatAlert(
         "Thành công",
         skipsCustomerConfirm
           ? "Không phát sinh phí. Đơn chuyển sang chờ cửa hàng xác nhận tiền."
-          : "Đã gửi báo giá. Chờ khách hàng xác nhận phí phát sinh."
+          : "Đã gửi báo giá. Chờ khách hàng xác nhận chi phí mới."
       );
     } catch (error) {
       compatAlert("Lỗi", "Không thể xử lí đơn hàng");
@@ -2198,6 +2249,57 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           </TouchableOpacity>
         </View>
 
+        {/* Staff manual discount — adjust body is a full replace, so this value is
+            echoed on every adjust call or the discount would reset to 0. */}
+        {orderInfo?.status === OrderStatus.CREATED && (
+          <View style={[styles.sectionCard, styles.discountCard]}>
+            <View style={styles.additionalFeeContainer}>
+              <View style={styles.additionalFeeHeader}>
+                <Text style={styles.additionalFeeLabel}>Giảm giá (VNĐ)</Text>
+              </View>
+              <View style={styles.additionalFeeInputContainer}>
+                <View style={styles.additionalFeeInputWrapper}>
+                  <TextInput
+                    style={styles.additionalFeeInput}
+                    value={manualDiscountDisplay}
+                    onChangeText={handleManualDiscountChange}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    placeholderTextColor="#9CA3AF"
+                    editable={!isConfirming}
+                  />
+                  <Text style={styles.additionalFeeCurrency}>VNĐ</Text>
+                </View>
+              </View>
+              <Text style={styles.discountHint}>
+                Trừ vào tổng tiền đơn (dịch vụ trước, sau đó đến hàng hóa). Tối
+                đa bằng tổng đơn.
+              </Text>
+            </View>
+
+            {/* Total comes from the order response; the discount is already applied. */}
+            <View style={styles.serviceTotalContainer}>
+              <View style={styles.serviceTotalRow}>
+                <View style={styles.serviceTotalItem}>
+                  <Text style={styles.serviceTotalLabel}>Tổng đơn (đã giảm)</Text>
+                  <Text style={styles.serviceTotalValue}>
+                    {formatCurrencyVND(orderInfo?.final_total ?? 0)}
+                  </Text>
+                </View>
+                {!!orderInfo?.manual_discount_amount &&
+                  orderInfo.manual_discount_amount > 0 && (
+                    <View style={styles.serviceTotalItem}>
+                      <Text style={styles.serviceTotalLabel}>Đã giảm</Text>
+                      <Text style={styles.discountAppliedValue}>
+                        -{formatCurrencyVND(orderInfo.manual_discount_amount)}
+                      </Text>
+                    </View>
+                  )}
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* Báo giá / Xử lí ngay Button */}
         {orderInfo?.status === OrderStatus.CREATED && (
           <View style={styles.confirmContainer}>
@@ -3365,6 +3467,20 @@ const styles = StyleSheet.create({
   additionalFeeContainer: {
     marginTop: 16,
     marginBottom: 12,
+  },
+  discountCard: {
+    borderLeftColor: "#F59E0B",
+  },
+  discountHint: {
+    fontSize: 11,
+    color: "#6B7280",
+    marginTop: 8,
+    lineHeight: 16,
+  },
+  discountAppliedValue: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#DC2626",
   },
   additionalFeeHeader: {
     flexDirection: "row",

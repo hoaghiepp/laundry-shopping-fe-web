@@ -734,14 +734,16 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
     }
   };
 
-  // Calculate final total with selected package and promotion
+  // Calculate final total with selected package and promotion.
+  // The staff manual discount is already netted into final_total, so keep it deducted here too.
   const calculatedPackageDeduction = calculatePackageDeduction();
   const calculatedPromotionDiscount = calculatePromotionDiscount();
   const calculatedFinalTotal = Math.max(
     0,
     (orderDetail.sub_total || 0) -
       calculatedPromotionDiscount -
-      calculatedPackageDeduction +
+      calculatedPackageDeduction -
+      (orderDetail.manual_discount_amount || 0) +
       (orderDetail.shipping_fee || 0) +
       (orderDetail.additional_fee || 0)
   );
@@ -1433,6 +1435,17 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
               </Text>
             </View>
           )}
+
+          {/* Staff manual discount — separate from promotion discount, already in final_total */}
+          {!!orderDetail.manual_discount_amount &&
+            orderDetail.manual_discount_amount > 0 && (
+              <View style={styles.priceRow}>
+                <Text style={styles.priceLabel}>Giảm giá nhân viên</Text>
+                <Text style={[styles.priceValue, styles.discountValue]}>
+                  -{formatCurrencyVND(orderDetail.manual_discount_amount)}
+                </Text>
+              </View>
+            )}
 
           {/* Show package deductions - each package in a separate row */}
           {selectedPackages.length > 0 && selectedPackages.map((pkg) => {

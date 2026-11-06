@@ -82,6 +82,8 @@ export interface Order {
   shipping_address_detail_snapshot: string;
   sub_total: number;
   discount_amount: number;
+  /** Staff-entered discount, already applied to final_total (capped at the order total). */
+  manual_discount_amount?: number;
   shipping_fee: number;
   package_deduction: number;
   wallet_deduction: number;
@@ -137,6 +139,11 @@ export interface AdjustOrderReq {
   new_items?: AdjustOrderNewItem[];
   product_additional_fee?: number;
   service_additional_fee?: number;
+  /**
+   * Staff discount subtracted from the order total. The adjust body is a full
+   * replace, so omitting it resets the discount to 0 — always send the current value.
+   */
+  manual_discount_amount?: number;
 }
 
 export interface OrderSearchResponse {
