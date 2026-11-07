@@ -36,6 +36,8 @@ const orderStatusLabel = (status: OrderStatus | string) => {
       return 'Đã hủy';
     case OrderStatus.NEED_CUSTOMER_CONFIRMATION:
       return 'Chờ xác nhận';
+    case OrderStatus.CANCEL_REQUESTED:
+      return 'Chờ xác nhận hủy';
     default:
       return String(status);
   }

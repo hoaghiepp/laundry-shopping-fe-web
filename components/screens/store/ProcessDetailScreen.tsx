@@ -13,11 +13,18 @@ import {
 import { storeMainContentPaddingTop } from "@/constants/storeWebLayout";
 import { compatAlert } from "@/lib/compatAlert";
 import { AddressLocation, goshipService } from "@/services/api/goshipService";
+import { extractApiErrorCode } from "@/services/api/apiUtils";
 import { logisticService } from "@/services/api/logisticService";
 import { useOrderStream } from "@/hooks/useOrderStream";
-import { Order, orderService } from "@/services/api/orderService";
+import { Order, orderService, CANCEL_REASON_MAX_LENGTH } from "@/services/api/orderService";
 import { staffOrderService } from "@/services/api/staffOrderService";
-import { isStorePaymentConfirm } from "@/components/orders/utils/orderUtils";
+import {
+  cancelNeedsCustomerConfirmation,
+  formatDateTime,
+  isCancelPending,
+  isOrderCancellable,
+  isStorePaymentConfirm,
+} from "@/components/orders/utils/orderUtils";
 import { storeService } from "@/services/api/storeService";
 import { formatCurrencyVND } from "@/utils/format";
 import {
@@ -100,6 +107,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   const [confirmingPayment, setConfirmingPayment] = useState(false);
   const [confirmingForCustomer, setConfirmingForCustomer] = useState(false);
   const [hideConfirmForCustomer, setHideConfirmForCustomer] = useState(false);
+  const [showCancelModal, setShowCancelModal] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelling, setCancelling] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [hideConfirmCancelForStaff, setHideConfirmCancelForStaff] = useState(false);
 
   const [retailItems, setRetailItems] = useState<any[]>([]);
   const [serviceItems, setServiceItems] = useState<any[]>([]);
@@ -376,8 +388,7 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
   };
 
   // Get order status display text
-  const getOrderStatusText = (): string => {
-    const status = orderInfo?.status;
+  const getOrderStatusTextFor = (status?: OrderStatus | null): string => {
     if (!status) return "Không xác định";
 
     switch (status) {
@@ -387,6 +398,8 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         return "Đang xử lý";
       case OrderStatus.NEED_CUSTOMER_CONFIRMATION:
         return "Chờ xác nhận";
+      case OrderStatus.CANCEL_REQUESTED:
+        return "Chờ khách xác nhận hủy";
       case OrderStatus.FINISHED:
         return "Hoàn thành";
       case OrderStatus.CANCELLED:
@@ -397,6 +410,8 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
         return OrderStatus[status] || "Không xác định";
     }
   };
+
+  const getOrderStatusText = (): string => getOrderStatusTextFor(orderInfo?.status);
 
   function getItemsBy(productType: ProductType): any[] {
     return (
@@ -937,6 +952,90 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
     (orderInfo.payment_status === PaymentStatus.UNPAID ||
       orderInfo.payment_status === PaymentStatus.WAITING_CUSTOMER_CONFIRM);
 
+  // Cancellation. Money collected is the only thing that decides whether the customer
+  // has to agree, so the warning below is driven by payment status alone.
+  const cancelPending = isCancelPending(orderInfo?.status);
+  const cancellable = isOrderCancellable(orderInfo?.status);
+  const cancelNeedsConfirmation = cancelNeedsCustomerConfirmation(
+    orderInfo?.payment_status
+  );
+  // Staff may answer only while the customer account has no password. The API is
+  // authoritative (`400059`), so this is just the optimistic default.
+  const showConfirmCancelForStaff =
+    cancelPending &&
+    !hideConfirmCancelForStaff &&
+    orderInfo?.created_by_store === true;
+  const cancelReasonTrimmed = cancelReason.trim();
+  const cancelReasonInvalid =
+    cancelReasonTrimmed.length === 0 ||
+    cancelReasonTrimmed.length > CANCEL_REASON_MAX_LENGTH;
+
+  const handleOpenCancelModal = () => {
+    setCancelReason("");
+    setShowCancelModal(true);
+  };
+
+  const handleSubmitCancel = async () => {
+    if (!orderInfo?.id || cancelReasonInvalid) return;
+    try {
+      setCancelling(true);
+      await orderService.staffCancel(orderInfo.id, {
+        reason: cancelReasonTrimmed,
+      });
+      setShowCancelModal(false);
+      setCancelReason("");
+      await fetchOrderDetails();
+      compatAlert(
+        cancelNeedsConfirmation ? "Đã gửi yêu cầu hủy" : "Đã hủy đơn",
+        cancelNeedsConfirmation
+          ? "Đơn đã thu tiền nên đang chờ khách xác nhận hủy."
+          : "Đơn hàng đã được hủy."
+      );
+    } catch (error: any) {
+      compatAlert("Lỗi", error?.message || "Không thể hủy đơn hàng");
+    } finally {
+      setCancelling(false);
+    }
+  };
+
+  const handleStaffConfirmCancel = () => {
+    compatAlert(
+      "Xác nhận hủy thay khách",
+      "Xác nhận hủy đơn này thay cho khách hàng?",
+      [
+        { text: "Hủy", style: "cancel" },
+        {
+          text: "Xác nhận",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setConfirmingCancel(true);
+              await orderService.staffConfirmCancel(orderInfo.id);
+              await fetchOrderDetails();
+              compatAlert("Thành công", "Đơn hàng đã được hủy.");
+            } catch (error: any) {
+              if (extractApiErrorCode(error) === "400059") {
+                // Customer already activated their account — only they can answer.
+                setHideConfirmCancelForStaff(true);
+                compatAlert(
+                  "Không thể hủy thay",
+                  "Khách đã kích hoạt tài khoản, chỉ khách mới có thể xác nhận hủy."
+                );
+                return;
+              }
+              compatAlert(
+                "Lỗi",
+                error?.message || "Không thể xác nhận hủy đơn"
+              );
+            } finally {
+              setConfirmingCancel(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleConfirmForCustomer = () => {
     compatAlert(
       "Xác nhận thay khách",
@@ -1284,19 +1383,19 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           onPress: async () => {
             try {
               const currentStatus = orderInfo.status;
-              let nextStatus = currentStatus;
-              if (currentStatus === OrderStatus.PROCESSING) {
-                nextStatus = OrderStatus.FINISHED;
-              }
-              if (currentStatus === OrderStatus.CUSTOMER_INCIDENTS_REJECTED) {
-                nextStatus = OrderStatus.CANCELLED;
-              }
+              // Only FINISHED is accepted by the generic status endpoint; cancel
+              // statuses are rejected with `400057` and terminal orders stay as-is.
+              const nextStatus =
+                currentStatus === OrderStatus.PROCESSING
+                  ? OrderStatus.FINISHED
+                  : null;
 
-              // Update order status to FINISHED via staff API
-              await orderService.updateOrderStatus(orderInfo.id, {
-                status: nextStatus,
-                note: "Hoàn thành bởi shop vận chuyển",
-              });
+              if (nextStatus) {
+                await orderService.updateOrderStatus(orderInfo.id, {
+                  status: nextStatus,
+                  note: "Hoàn thành bởi shop vận chuyển",
+                });
+              }
 
               // Refresh order to get latest status
               await fetchOrderDetails();
@@ -1308,7 +1407,9 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 
               compatAlert(
                 "Thành công",
-                "Đơn hàng đã được cập nhật hoàn thành.",
+                nextStatus
+                  ? "Đơn hàng đã được cập nhật hoàn thành."
+                  : "Đã ghi nhận trả hàng cho khách.",
                 [{ text: "OK", onPress: () => onBack() }],
               );
             } catch (error) {
@@ -1355,11 +1456,10 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           onPress: async () => {
             try {
               setProcessingIncidents((prev) => new Set(prev).add(incidentId));
+              // The backend already closes the order (`CUSTOMER_INCIDENTS_REJECTED`)
+              // when the incident is rejected. The generic status endpoint refuses
+              // cancellation statuses (`400057`), so don't follow up with one.
               await storeService.rejectIncident(incidentId);
-              await orderService.updateOrderStatus(orderInfo.id, {
-                status: OrderStatus.CANCELLED,
-                note: "Từ chối sự cố",
-              });
               await fetchOrderDetails();
             } catch (error: any) {
               compatAlert("Lỗi", error?.message || "Không thể từ chối sự cố");
@@ -1500,6 +1600,85 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
             >
               <Text style={styles.confirmPaymentButtonText}>
                 {confirmingPayment ? "Đang xác nhận..." : "Xác nhận đã nhận tiền"}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+          {/* Cancelled orders keep the staff reason so the shop can explain it later. */}
+          {orderInfo?.status === OrderStatus.CANCELLED &&
+            !!orderInfo?.cancel_reason && (
+              <View style={styles.cancelPendingCard}>
+                <View style={styles.cancelPendingHeader}>
+                  <FontAwesome5 name="ban" size={12} color="#6B7280" />
+                  <Text style={styles.cancelPendingTitle}>Đơn đã hủy</Text>
+                </View>
+                <Text style={styles.cancelPendingReason}>
+                  Lý do: {orderInfo.cancel_reason}
+                </Text>
+                {!!orderInfo.cancel_requested_at && (
+                  <Text style={styles.cancelPendingMeta}>
+                    Yêu cầu lúc {formatDateTime(orderInfo.cancel_requested_at)}
+                  </Text>
+                )}
+              </View>
+            )}
+
+          {/* Pending cancellation: waiting on the customer's answer. */}
+          {cancelPending && (
+            <View style={styles.cancelPendingCard}>
+              <View style={styles.cancelPendingHeader}>
+                <FontAwesome5
+                  name="hourglass-half"
+                  size={12}
+                  color="#B45309"
+                />
+                <Text style={styles.cancelPendingTitle}>
+                  Đang chờ khách xác nhận hủy
+                </Text>
+              </View>
+              <Text style={styles.cancelPendingReason}>
+                Lý do: {orderInfo?.cancel_reason || "Không có"}
+              </Text>
+              {!!orderInfo?.cancel_requested_at && (
+                <Text style={styles.cancelPendingMeta}>
+                  Yêu cầu lúc {formatDateTime(orderInfo.cancel_requested_at)}
+                </Text>
+              )}
+              {!!orderInfo?.cancel_previous_status && (
+                <Text style={styles.cancelPendingMeta}>
+                  Nếu khách từ chối, đơn trở về trạng thái{" "}
+                  {getOrderStatusTextFor(orderInfo.cancel_previous_status)}
+                </Text>
+              )}
+              {showConfirmCancelForStaff && (
+                <TouchableOpacity
+                  style={[
+                    styles.cancelButton,
+                    confirmingCancel && styles.cancelButtonDisabled,
+                  ]}
+                  disabled={confirmingCancel}
+                  activeOpacity={0.8}
+                  onPress={handleStaffConfirmCancel}
+                >
+                  <Text style={styles.cancelButtonText}>
+                    {confirmingCancel
+                      ? "Đang xác nhận..."
+                      : "Xác nhận hủy thay khách"}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          {/* Cancel entry point for every non-terminal status. */}
+          {cancellable && !cancelPending && (
+            <TouchableOpacity
+              style={[styles.cancelButton, styles.cancelButtonOutline]}
+              activeOpacity={0.8}
+              onPress={handleOpenCancelModal}
+            >
+              <Text style={[styles.cancelButtonText, styles.cancelButtonOutlineText]}>
+                Hủy đơn hàng
               </Text>
             </TouchableOpacity>
           )}
@@ -2652,6 +2831,79 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           </View>
         </View>
       </Modal>
+
+      {/* Cancel order — reason is required, trimmed, max 500 chars. */}
+      <Modal
+        visible={showCancelModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!cancelling) setShowCancelModal(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Hủy đơn hàng</Text>
+            </View>
+            <View style={styles.cancelModalBody}>
+              <Text style={styles.cancelModalHint}>
+                {cancelNeedsConfirmation
+                  ? "Đơn đã thu tiền. Khách hàng sẽ nhận được yêu cầu hủy và phải xác nhận trước khi đơn bị hủy."
+                  : "Đơn chưa thu tiền nên sẽ được hủy ngay, không cần khách xác nhận."}
+              </Text>
+              <Text style={styles.cancelModalLabel}>Lý do hủy</Text>
+              <TextInput
+                style={styles.cancelReasonInput}
+                value={cancelReason}
+                onChangeText={setCancelReason}
+                placeholder="VD: Khách không đến lấy đồ"
+                placeholderTextColor="#9CA3AF"
+                multiline
+                maxLength={CANCEL_REASON_MAX_LENGTH}
+                editable={!cancelling}
+              />
+              <Text style={styles.cancelReasonCounter}>
+                {cancelReasonTrimmed.length}/{CANCEL_REASON_MAX_LENGTH}
+              </Text>
+            </View>
+            <View style={styles.modalFooter}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalCancelButton]}
+                onPress={() => setShowCancelModal(false)}
+                disabled={cancelling}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.modalCancelButtonText}>Đóng</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalButton,
+                  styles.cancelConfirmButton,
+                  (cancelReasonInvalid || cancelling) &&
+                    styles.modalConfirmButtonDisabled,
+                ]}
+                onPress={handleSubmitCancel}
+                disabled={cancelReasonInvalid || cancelling}
+                activeOpacity={0.8}
+              >
+                {cancelling ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Text
+                    style={[
+                      styles.modalConfirmButtonText,
+                      cancelReasonInvalid && styles.modalConfirmButtonTextDisabled,
+                    ]}
+                  >
+                    {cancelNeedsConfirmation ? "Gửi yêu cầu hủy" : "Hủy đơn"}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 };
@@ -3676,6 +3928,94 @@ const styles = StyleSheet.create({
   },
   modalConfirmButtonTextDisabled: {
     color: "#9CA3AF",
+  },
+  // Cancel order
+  cancelButton: {
+    marginTop: 12,
+    backgroundColor: "#DC2626",
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  cancelButtonDisabled: {
+    backgroundColor: "#9CA3AF",
+    opacity: 0.7,
+  },
+  cancelButtonOutline: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#FCA5A5",
+  },
+  cancelButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  cancelButtonOutlineText: {
+    color: "#B91C1C",
+  },
+  cancelConfirmButton: {
+    backgroundColor: "#DC2626",
+  },
+  cancelPendingCard: {
+    marginTop: 12,
+    backgroundColor: "#FFFBEB",
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+    borderRadius: 8,
+    padding: 12,
+  },
+  cancelPendingHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginBottom: 6,
+  },
+  cancelPendingTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#92400E",
+  },
+  cancelPendingReason: {
+    fontSize: 12,
+    color: "#78350F",
+    marginBottom: 2,
+  },
+  cancelPendingMeta: {
+    fontSize: 11,
+    color: "#A16207",
+  },
+  cancelModalBody: {
+    padding: 20,
+  },
+  cancelModalHint: {
+    fontSize: 13,
+    color: "#4B5563",
+    marginBottom: 16,
+    lineHeight: 18,
+  },
+  cancelModalLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#374151",
+    marginBottom: 6,
+  },
+  cancelReasonInput: {
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: "#111827",
+    minHeight: 88,
+    textAlignVertical: "top",
+  },
+  cancelReasonCounter: {
+    marginTop: 6,
+    fontSize: 11,
+    color: "#9CA3AF",
+    textAlign: "right",
   },
   modalLoadingOverlay: {
     position: "absolute",

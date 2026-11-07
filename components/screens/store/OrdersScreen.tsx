@@ -110,6 +110,8 @@ const STORE_TABS: OrderTab[] = [
 function orderMatchesStoreTab(tab: OrderTab, order: Order): boolean {
   switch (tab) {
     case "new":
+      // A pending cancellation is not "new" work even if cash is still unconfirmed.
+      if (order.status === OrderStatus.CANCEL_REQUESTED) return false;
       return (
         order.status === OrderStatus.CREATED ||
         (isStorePaymentConfirm(order.payment_status) &&
@@ -122,9 +124,11 @@ function orderMatchesStoreTab(tab: OrderTab, order: Order): boolean {
     case "cancelled":
       return (
         order.status === OrderStatus.CANCELLED ||
-        order.status === OrderStatus.CUSTOMER_REJECTED
+        order.status === OrderStatus.CUSTOMER_REJECTED ||
+        order.status === OrderStatus.CANCEL_REQUESTED
       );
     case "processing":
+      if (order.status === OrderStatus.CANCEL_REQUESTED) return false;
       if (order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION) return true;
       if (order.status === OrderStatus.CANCELLED) return !!order.factory_id;
       if (order.status !== OrderStatus.PROCESSING) return false;
@@ -190,7 +194,10 @@ function cardStatusForTab(
     return undefined;
   }
   if (tab === "finished") return "finished";
-  if (tab === "cancelled") return "cancelled";
+  if (tab === "cancelled") {
+    if (order.status === OrderStatus.CANCEL_REQUESTED) return "cancel_requested";
+    return "cancelled";
+  }
   if (tab === "waiting_transport") return "waiting_transport";
   if (tab === "waiting_return") {
     if (order.status === OrderStatus.CANCELLED) return "cancelled_waiting_return";
@@ -1063,6 +1070,16 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             { page, size: PAGE_SIZE, sort: "createdDate,desc" }
           );
 
+          // Orders a staff member asked to cancel; they stay here until the customer answers.
+          const cancelRequestedResponse = await orderService.searchStoreOrders(
+            {
+              hub_id: storeId,
+              status: OrderStatus.CANCEL_REQUESTED,
+              fetch_order_items: true,
+            },
+            { page, size: PAGE_SIZE, sort: "createdDate,desc" }
+          );
+
           // Filter CUSTOMER_REJECTED orders: must have service items
           const customerRejectedOrders = customerRejectedResponse.data.filter((order) => {
             const serviceItems =
@@ -1072,7 +1089,11 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             return serviceItems.length === 0;
           });
 
-          filteredOrders = [...cancelledOrders, ...customerRejectedOrders];
+          filteredOrders = [
+            ...cancelledOrders,
+            ...customerRejectedOrders,
+            ...(cancelRequestedResponse.data || []),
+          ];
 
           // Filter CANCELLED orders: only include if they have tracking items at current store
           try {
@@ -1110,7 +1131,11 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
               return hasTrackingItemsAtCurrentStore;
             });
 
-            filteredOrders = [...filteredCancelledOrders, ...customerRejectedOrders];
+            filteredOrders = [
+              ...filteredCancelledOrders,
+              ...customerRejectedOrders,
+              ...(cancelRequestedResponse.data || []),
+            ];
           } catch (error) {
             console.error("Failed to filter CANCELLED orders by tracking items:", error);
             // Continue with original filtered orders if error occurs
@@ -1176,7 +1201,8 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
           } else if (tab === "finished") {
             return mapOrderToCardData(order, onOrderPress, "finished");
           } else if (tab === "cancelled") {
-            return mapOrderToCardData(order, onOrderPress, "cancelled");
+            const status = cardStatusForTab("cancelled", order);
+            return mapOrderToCardData(order, onOrderPress, status);
           }
           return mapOrderToCardData(order, onOrderPress);
         })
@@ -1324,7 +1350,10 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
 
 
         // Check if order is cancelled or customer rejected
-        if (order.status === OrderStatus.CANCELLED) {
+        if (order.status === OrderStatus.CANCEL_REQUESTED) {
+          // Pending cancellation: shown in the cancelled tab, not yet final.
+          counts.cancelled++;
+        } else if (order.status === OrderStatus.CANCELLED) {
           counts.cancelled++;
           // Only count CANCELLED orders if they have tracking items at current store
           const trackingItems = trackingItemsByOrderId.get(order.id);

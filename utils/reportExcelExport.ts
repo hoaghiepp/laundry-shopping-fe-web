@@ -40,6 +40,7 @@ const ORDER_STATUS_LABELS: Record<string, string> = {
   [OrderStatus.CREATED]: 'Mới nhận',
   [OrderStatus.PROCESSING]: 'Đang xử lý',
   [OrderStatus.NEED_CUSTOMER_CONFIRMATION]: 'Chờ xác nhận KH',
+  [OrderStatus.CANCEL_REQUESTED]: 'Chờ khách xác nhận hủy',
   [OrderStatus.FINISHED]: 'Hoàn thành',
   [OrderStatus.CANCELLED]: 'Đã hủy',
   [OrderStatus.CUSTOMER_REJECTED]: 'KH từ chối',

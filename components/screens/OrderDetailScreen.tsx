@@ -2,6 +2,8 @@ import {
   DiscountType,
   IncidentStatus,
   IncidentType,
+  OrderLogAction,
+  OrderLogActorType,
   OrderStatus,
   PaymentStatus,
   ProductType,
@@ -78,6 +80,13 @@ export interface OrderLog {
   note?: string;
   created_by: string;
   created_date: string;
+  /** Audit action: STATUS_CHANGED, CANCELLED_BY_STAFF, CANCEL_REQUESTED, ... */
+  action?: OrderLogAction;
+  actor_type?: OrderLogActorType;
+  /** Customer or staff entity id; null for SYSTEM. */
+  actor_id?: string | null;
+  /** Cancel reason, when the row is about a cancellation. */
+  reason?: string | null;
 }
 
 export interface OrderDetail extends Order {
@@ -143,6 +152,13 @@ const getStatusDisplay = (status: OrderStatus) => {
         color: "#1D4ED8",
         bg: "#DBEAFE",
         icon: "spinner",
+      };
+    case OrderStatus.CANCEL_REQUESTED:
+      return {
+        text: "Chờ bạn xác nhận hủy",
+        color: "#B45309",
+        bg: "#FEF3C7",
+        icon: "hourglass-half",
       };
     // case OrderStatus.READY_TO_DELIVER:
     //   return { text: 'Sẵn sàng giao', color: '#059669', bg: '#D1FAE5', icon: 'box-open' };
@@ -248,7 +264,8 @@ const generateTimelineEvents = (order: OrderDetail): TimelineEvent[] => {
       title: statusDisplay.text,
       status: isLast ? "current" : "completed",
       isException,
-      note: log.note,
+      // Cancellation rows carry the staff reason instead of a free-form note.
+      note: log.reason || log.note,
     };
   });
 
@@ -295,6 +312,8 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
   const [isConfirming, setIsConfirming] = useState(false);
   const [isPaying, setIsPaying] = useState(false);
   const [isRejecting, setIsRejecting] = useState(false);
+  const [isConfirmingCancel, setIsConfirmingCancel] = useState(false);
+  const [isRejectingCancel, setIsRejectingCancel] = useState(false);
   const [incidents, setIncidents] = useState<any[]>([]);
   const [loadingIncidents, setLoadingIncidents] = useState(false);
   const [processingIncidents, setProcessingIncidents] = useState<Set<string>>(new Set());
@@ -853,6 +872,59 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
     }
   };
 
+  /** Customer agrees to the store's cancellation request: the order becomes CANCELLED. */
+  const handleConfirmCancel = async () => {
+    try {
+      setIsConfirmingCancel(true);
+      await orderService.customerConfirmCancel(orderDetail.id);
+      await fetchOrderWithLogs();
+
+      // A cancellation may refund wallet money, so refresh the cached balance too.
+      try {
+        const updatedProfile = await customerService.getCustomerProfile();
+        if (updatedProfile?.data) {
+          await SecureStore.setItemAsync(
+            SecureStoreKeys.CUSTOMER_PROFILE,
+            JSON.stringify(updatedProfile.data)
+          );
+        }
+      } catch (error) {
+        console.error("Error updating customer profile:", error);
+      }
+
+      Alert.alert("Đã hủy đơn", "Đơn hàng đã được hủy theo yêu cầu của bạn.");
+    } catch (error: any) {
+      console.error("Error confirming cancellation:", error);
+      Alert.alert(
+        "Lỗi",
+        error.message || "Không thể xác nhận hủy đơn. Vui lòng thử lại."
+      );
+    } finally {
+      setIsConfirmingCancel(false);
+    }
+  };
+
+  /** Customer refuses the request: the order returns to the status it had before. */
+  const handleRejectCancel = async () => {
+    try {
+      setIsRejectingCancel(true);
+      await orderService.customerRejectCancel(orderDetail.id);
+      await fetchOrderWithLogs();
+      Alert.alert(
+        "Đã từ chối hủy",
+        "Đơn hàng được giữ lại và trở về trạng thái trước đó."
+      );
+    } catch (error: any) {
+      console.error("Error rejecting cancellation:", error);
+      Alert.alert(
+        "Lỗi",
+        error.message || "Không thể từ chối hủy đơn. Vui lòng thử lại."
+      );
+    } finally {
+      setIsRejectingCancel(false);
+    }
+  };
+
   // Handle confirm incident
   const handleConfirmIncident = async (incidentId: string) => {
     Alert.alert(
@@ -1115,6 +1187,7 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
           )}
           {orderDetail.payment_status === PaymentStatus.UNPAID &&
             orderDetail.status !== OrderStatus.CANCELLED &&
+            orderDetail.status !== OrderStatus.CANCEL_REQUESTED &&
             orderDetail.status !== OrderStatus.CUSTOMER_REJECTED &&
             orderDetail.status !== OrderStatus.FINISHED && (
               <TouchableOpacity
@@ -1129,6 +1202,61 @@ export const OrderDetailScreen: React.FC<OrderDetailScreenProps> = ({
               </TouchableOpacity>
             )}
         </View>
+
+        {/* Pending cancellation: the store asked to cancel, the customer decides. */}
+        {orderDetail.status === OrderStatus.CANCEL_REQUESTED && (
+          <View style={styles.cancelRequestCard}>
+            <View style={styles.cancelRequestHeader}>
+              <FontAwesome5 name="hourglass-half" size={14} color="#B45309" />
+              <Text style={styles.cancelRequestTitle}>
+                Cửa hàng yêu cầu hủy đơn
+              </Text>
+            </View>
+            <Text style={styles.cancelRequestReason}>
+              Lý do: {orderDetail.cancel_reason || "Không có"}
+            </Text>
+            {!!orderDetail.cancel_requested_at && (
+              <Text style={styles.cancelRequestMeta}>
+                Yêu cầu lúc {formatDate(orderDetail.cancel_requested_at)}
+              </Text>
+            )}
+            <Text style={styles.cancelRequestHint}>
+              Nếu bạn từ chối, đơn trở về trạng thái{" "}
+              {getStatusDisplay(
+                orderDetail.cancel_previous_status ?? OrderStatus.CREATED
+              ).text.toLowerCase()}
+              .
+            </Text>
+            <View style={styles.cancelRequestActions}>
+              <TouchableOpacity
+                style={[
+                  styles.cancelButton,
+                  isRejectingCancel && styles.confirmButtonDisabled,
+                ]}
+                onPress={handleRejectCancel}
+                disabled={isRejectingCancel || isConfirmingCancel}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.cancelButtonText}>
+                  {isRejectingCancel ? "Đang xử lý..." : "Không hủy"}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.confirmButton,
+                  isConfirmingCancel && styles.confirmButtonDisabled,
+                ]}
+                onPress={handleConfirmCancel}
+                disabled={isConfirmingCancel || isRejectingCancel}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.confirmButtonText}>
+                  {isConfirmingCancel ? "Đang xử lý..." : "Đồng ý hủy"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
 
         {/* Shipping Status - Collapsible */}
         <View style={styles.timelineCard}>
@@ -2777,6 +2905,45 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: "#FFFFFF",
+  },
+  cancelRequestCard: {
+    backgroundColor: "#FFFBEB",
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  cancelRequestHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+  },
+  cancelRequestTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#92400E",
+  },
+  cancelRequestReason: {
+    fontSize: 13,
+    color: "#78350F",
+    marginBottom: 4,
+  },
+  cancelRequestMeta: {
+    fontSize: 12,
+    color: "#A16207",
+    marginBottom: 4,
+  },
+  cancelRequestHint: {
+    fontSize: 12,
+    color: "#78350F",
+    marginBottom: 12,
+  },
+  cancelRequestActions: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    gap: 12,
   },
   incidentSectionCard: {
     backgroundColor: "#FEF2F2",

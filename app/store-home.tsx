@@ -48,6 +48,7 @@ import { packageService } from "@/services/api/packageProductService";
 import { productService } from "@/services/api/productService";
 import { StoreListItem, storeService } from "@/services/api/storeService";
 import { isAdmin, isSuperAdmin } from "@/utils/globalState";
+import { router } from "expo-router";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
     Animated,
@@ -248,7 +249,13 @@ export default function StoreHomeScreen() {
 
   const fetchStores = async () => {
     try {
-      await ensureSessionFromStoredTokens();
+      // An expired/cleared session makes every request below 401, which currently
+      // leaves the portal on "Chọn cửa hàng" with 0 orders and no error. Go to login.
+      const hasSession = await ensureSessionFromStoredTokens();
+      if (!hasSession) {
+        router.replace("/login");
+        return;
+      }
       await ensureCustomerOrderTokensFromStorage();
       let response;
       if (isSuperAdmin()) {
@@ -258,22 +265,24 @@ export default function StoreHomeScreen() {
         );
       }
       else if (isAdmin()) {
+        // `/v1/admin/admins/profile` has no `store_id` for admins that are not
+        // bound to a single store (e.g. admin@example.com), and the store search
+        // endpoint is readable by any authenticated session. Use it so the
+        // portal still gets a store (and therefore orders) instead of going empty.
         const adminProfile = await adminService.getAdminProfile();
         const storeId = adminProfile?.data?.store_id;
-        if (!storeId) {
-          setStores([]);
-          setSelectedStore(null);
-          return;
+        if (storeId) {
+          const storeProfile = await storeService.getStoreProfile(storeId);
+          if (storeProfile?.data) {
+            response = { data: [storeProfile.data] };
+          }
         }
-
-        const storeProfile = await storeService.getStoreProfile(storeId);
-        if (!storeProfile?.data) {
-          setStores([]);
-          setSelectedStore(null);
-          return;
+        if (!response) {
+          response = await storeService.searchStore(
+            { deleted: false, type: StoreType.HUB },
+            { page: 0, size: 1000 }
+          );
         }
-
-        response = { data: [storeProfile.data] };
       }
       else {
         response = await staffService.getAllStores();

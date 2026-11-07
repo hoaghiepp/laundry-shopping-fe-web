@@ -3,6 +3,7 @@ import axios from "axios";
 import * as SecureStore from "@/lib/secureStorage";
 
 const TRANSPORT_ERROR_MESSAGES: Record<string, string> = {
+  "400035": "Bạn không thuộc cửa hàng của đơn này.",
   "400045": "Món không ở cửa hàng này. Hãy tải lại danh sách.",
   "400046": "Món đã nằm trên một chuyến.",
   "400047": "Không thể chuyển trạng thái món đồ như vậy",
@@ -12,6 +13,11 @@ const TRANSPORT_ERROR_MESSAGES: Record<string, string> = {
   "400051": "Còn mã chưa nhận. Xác nhận thất lạc trước khi hoàn tất.",
   "400052": "Chưa chọn món nào.",
   "400053": "Đơn đã huỷ hoặc bị từ chối. Bỏ thẻ này.",
+  "400056": "Đơn đã hoàn thành hoặc đã huỷ, không thể huỷ.",
+  "400057": "Huỷ đơn phải dùng chức năng huỷ đơn, không đổi trạng thái trực tiếp.",
+  "400058": "Đơn không ở trạng thái chờ xác nhận huỷ.",
+  "400059": "Khách đã kích hoạt tài khoản, chỉ khách mới có thể xác nhận huỷ.",
+  "404009": "Không tìm thấy đơn hàng.",
 };
 
 export function extractApiErrorCode(error: unknown): string {

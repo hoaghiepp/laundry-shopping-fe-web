@@ -42,6 +42,10 @@ export const mapOrderStatusToTab = (
       return "processing";
     case OrderStatus.NEED_CUSTOMER_CONFIRMATION:
       return "processing";
+    case OrderStatus.CANCEL_REQUESTED:
+      // Pending cancellation sits with the cancelled orders until it resolves, so it never
+      // disappears from the board while the customer has not answered.
+      return "cancelled";
     case OrderStatus.CUSTOMER_REJECTED:
       return "exception";
     case OrderStatus.FINISHED:

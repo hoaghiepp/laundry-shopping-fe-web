@@ -667,16 +667,28 @@ export default function HomeScreen() {
       return;
     }
     try {
-      const response = await orderService.searchCustomerOrders(
-        {
-          customer_id: customerProfile.id,
-          status: OrderStatus.NEED_CUSTOMER_CONFIRMATION,
-          fetch_order_items: false,
-          fetch_order_logs: false,
-        },
-        { page: 0, size: 1 }
-      );
-      setNeedConfirmCount(response.meta?.total ?? 0);
+      // Both pending quotes and pending cancel requests wait on the customer.
+      const [quotes, cancels] = await Promise.all([
+        orderService.searchCustomerOrders(
+          {
+            customer_id: customerProfile.id,
+            status: OrderStatus.NEED_CUSTOMER_CONFIRMATION,
+            fetch_order_items: false,
+            fetch_order_logs: false,
+          },
+          { page: 0, size: 1 }
+        ),
+        orderService.searchCustomerOrders(
+          {
+            customer_id: customerProfile.id,
+            status: OrderStatus.CANCEL_REQUESTED,
+            fetch_order_items: false,
+            fetch_order_logs: false,
+          },
+          { page: 0, size: 1 }
+        ),
+      ]);
+      setNeedConfirmCount((quotes.meta?.total ?? 0) + (cancels.meta?.total ?? 0));
     } catch (error) {
       console.error("Error fetching need-confirm order count:", error);
     }

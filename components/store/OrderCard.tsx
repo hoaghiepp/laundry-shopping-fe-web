@@ -14,6 +14,7 @@ export interface OrderCardData {
     | 'wait_confirm'
     | 'finished'
     | 'cancelled'
+    | 'cancel_requested'
     | 'cancelled_waiting_return'
     | 'customer_rejected_waiting_return'
     | 'exception';
@@ -104,6 +105,7 @@ export const OrderCardStore: React.FC<OrderCardStoreProps> = ({
       case 'wait_confirm': return '#F59E0B';
       case 'finished': return '#10B981';
       case 'cancelled': return '#6B7280';
+      case 'cancel_requested': return '#F59E0B';
       case 'cancelled_waiting_return': return '#EF4444';
       case 'customer_rejected_waiting_return': return '#EF4444';
       case 'exception': return '#EF4444';
@@ -125,6 +127,8 @@ export const OrderCardStore: React.FC<OrderCardStoreProps> = ({
         return { bg: '#ECFDF5', border: '#10B981', shadow: '#10B981' };
       case 'cancelled': 
         return { bg: '#F3F4F6', border: '#9CA3AF', shadow: '#9CA3AF' };
+      case 'cancel_requested':
+        return { bg: '#FFFBEB', border: '#F59E0B', shadow: '#F59E0B' };
       case 'cancelled_waiting_return': 
         return { bg: '#FEE2E2', border: '#EF4444', shadow: '#EF4444' };
       case 'customer_rejected_waiting_return': 
@@ -150,6 +154,7 @@ export const OrderCardStore: React.FC<OrderCardStoreProps> = ({
       case 'wait_confirm': return { text: 'Chờ xác nhận', bg: '#FEF3C7', color: '#92400E' };
       case 'finished': return { text: 'Hoàn thành', bg: '#ECFDF5', color: '#065F46' };
       case 'cancelled': return { text: 'Đã hủy', bg: '#F3F4F6', color: '#4B5563' };
+      case 'cancel_requested': return { text: 'Chờ khách xác nhận hủy', bg: '#FEF3C7', color: '#92400E' };
       case 'cancelled_waiting_return': return { text: 'Đã hủy - Chờ trả', bg: '#FEE2E2', color: '#991B1B' };
       case 'customer_rejected_waiting_return': return { text: 'Khách từ chối - Chờ trả', bg: '#FEE2E2', color: '#991B1B' };
       case 'exception': return { text: 'Sự cố', bg: '#FEE2E2', color: '#991B1B' };

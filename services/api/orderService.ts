@@ -1,5 +1,5 @@
 import { API_BASE_URL } from "@/constants/api";
-import { OrderStatus, PaymentStatus, SecureStoreKeys } from "@/constants/enum";
+import { CancelResolvedBy, OrderStatus, PaymentStatus, SecureStoreKeys } from "@/constants/enum";
 import { userAxios } from "@/lib/apiClient";
 import { PaginationParams } from "@/utils/pagination";
 import * as SecureStore from "@/lib/secureStorage";
@@ -100,6 +100,16 @@ export interface Order {
   status: OrderStatus;
   payment_status: PaymentStatus;
   created_by_store?: boolean;
+  /** Reason staff entered. Present on immediate cancels too, so the UI can show why. */
+  cancel_reason?: string | null;
+  /** Staff entity id that opened the cancel request. */
+  cancel_requested_by?: string | null;
+  /** ISO-8601 instant; when the cancel request was opened. */
+  cancel_requested_at?: string | null;
+  /** Status to restore when the customer rejects the request. */
+  cancel_previous_status?: OrderStatus | null;
+  /** Who closed the request. */
+  cancel_resolved_by?: CancelResolvedBy | null;
   is_split_shipment?: boolean;
   is_need_shipment?: boolean;
   deleted: boolean;
@@ -160,6 +170,14 @@ export interface UpdateOrderStatusReq {
   status: OrderStatus;
   note?: string;
 }
+
+export interface CancelOrderReq {
+  /** Required, trimmed, max 500 chars. Blank is rejected with INVALID_PARAMETERS. */
+  reason: string;
+}
+
+/** Max length accepted by the backend for a cancel reason. */
+export const CANCEL_REASON_MAX_LENGTH = 500;
 
 export const orderService = {
   checkout: async (data: OrderCheckoutReq): Promise<any> => {
@@ -418,5 +436,106 @@ export const orderService = {
       }
     );
     return response.data;
+  },
+
+  /**
+   * Staff cancels an order. Unpaid orders are cancelled immediately; paid ones become
+   * `CANCEL_REQUESTED` and wait for the customer. Safe to retry: a second call while the
+   * request is pending returns the current order.
+   */
+  staffCancel: async (orderId: string, data: CancelOrderReq): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("Store token not found");
+    }
+    try {
+      const response = await userAxios.put(
+        `${API_BASE_URL}/v1/staff/orders/${orderId}/cancel`,
+        data,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(extractApiErrorMessage(error, "Cancel order failed"));
+    }
+  },
+
+  /**
+   * Staff accepts the pending cancel request on the customer's behalf. Only allowed while the
+   * customer account has no password; otherwise the API answers `400059`.
+   */
+  staffConfirmCancel: async (orderId: string): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("Store token not found");
+    }
+    try {
+      const response = await userAxios.put(
+        `${API_BASE_URL}/v1/staff/orders/${orderId}/confirm-cancel`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(
+        extractApiErrorMessage(error, "Confirm cancellation failed")
+      );
+    }
+  },
+
+  /** Customer accepts the pending cancel request; the order becomes CANCELLED. */
+  customerConfirmCancel: async (orderId: string): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("User token not found");
+    }
+    try {
+      const response = await userAxios.put(
+        `${API_BASE_URL}/v1/customer/orders/${orderId}/confirm-cancel`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(
+        extractApiErrorMessage(error, "Confirm cancellation failed")
+      );
+    }
+  },
+
+  /** Customer refuses the pending cancel request; the order returns to its previous status. */
+  customerRejectCancel: async (orderId: string): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("User token not found");
+    }
+    try {
+      const response = await userAxios.put(
+        `${API_BASE_URL}/v1/customer/orders/${orderId}/reject-cancel`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(
+        extractApiErrorMessage(error, "Reject cancellation failed")
+      );
+    }
   },
 };

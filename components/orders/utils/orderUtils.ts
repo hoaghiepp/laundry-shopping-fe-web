@@ -82,6 +82,15 @@ export const getOrderStatusDisplay = (
         iconBg: "#DBEAFE",
         iconColor: "#1D4ED8",
       };
+    case OrderStatus.CANCEL_REQUESTED:
+      return {
+        text: "Chờ xác nhận huỷ",
+        color: "#B45309",
+        bg: "#FEF3C7",
+        icon: "hourglass-half",
+        iconBg: "#FEF3C7",
+        iconColor: "#B45309",
+      };
     case OrderStatus.CANCELLED:
       return {
         text: "Đã hủy",
@@ -211,7 +220,8 @@ export const mapOrderToDisplay = (
 ): DisplayOrder => {
   const statusDisplay = getOrderStatusDisplay(order.status);
   const isException =
-    order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION
+    order.status === OrderStatus.NEED_CUSTOMER_CONFIRMATION ||
+    order.status === OrderStatus.CANCEL_REQUESTED;
 
   // Extract item images
   const orderItems = order.order_items || [];
@@ -286,3 +296,45 @@ export const isOrderActive = (status: OrderStatus): boolean => {
   return status !== OrderStatus.CANCELLED;
 };
 
+/** Payment statuses that count as "money already collected" by the store. */
+export function isMoneyCollected(
+  status: PaymentStatus | string | null | undefined
+): boolean {
+  return status === PaymentStatus.PAID || status === PaymentStatus.PARTIAL_PAID;
+}
+
+/**
+ * Statuses the backend refuses to cancel (`400056`). `PROCESSING` is cancellable,
+ * so it must not be listed here.
+ */
+const NON_CANCELLABLE_STATUSES: ReadonlySet<OrderStatus> = new Set([
+  OrderStatus.FINISHED,
+  OrderStatus.CANCELLED,
+  OrderStatus.CUSTOMER_REJECTED,
+  OrderStatus.CUSTOMER_INCIDENTS_REJECTED,
+]);
+
+/** Whether staff may start a cancellation for this order ("show the cancel button"). */
+export function isOrderCancellable(
+  status: OrderStatus | string | null | undefined
+): boolean {
+  if (!status) return false;
+  return !NON_CANCELLABLE_STATUSES.has(status as OrderStatus);
+}
+
+/** Whether the order is waiting on the customer's answer to a cancel request. */
+export function isCancelPending(
+  status: OrderStatus | string | null | undefined
+): boolean {
+  return status === OrderStatus.CANCEL_REQUESTED;
+}
+
+/**
+ * Whether cancelling this order needs the customer's confirmation. Mirrors the single
+ * backend rule: money collected ⇒ `CANCEL_REQUESTED`, otherwise an immediate cancel.
+ */
+export function cancelNeedsCustomerConfirmation(
+  paymentStatus: PaymentStatus | string | null | undefined
+): boolean {
+  return isMoneyCollected(paymentStatus);
+}

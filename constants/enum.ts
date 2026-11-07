@@ -25,10 +25,34 @@ export enum OrderStatus {
   CREATED = "CREATED",
   PROCESSING = "PROCESSING",
   NEED_CUSTOMER_CONFIRMATION = "NEED_CUSTOMER_CONFIRMATION",
+  /** Staff asked to cancel a paid order; waits for the customer (or staff on their behalf). */
+  CANCEL_REQUESTED = "CANCEL_REQUESTED",
   FINISHED = "FINISHED",
   CANCELLED = "CANCELLED",
   CUSTOMER_REJECTED = "CUSTOMER_REJECTED",
   CUSTOMER_INCIDENTS_REJECTED = "CUSTOMER_INCIDENTS_REJECTED",
+}
+
+/** Who answered a cancellation request. */
+export enum CancelResolvedBy {
+  CUSTOMER = "CUSTOMER",
+  STAFF = "STAFF",
+}
+
+/** `order_logs.action` — what happened in a single audit row. */
+export enum OrderLogAction {
+  STATUS_CHANGED = "STATUS_CHANGED",
+  CANCELLED_BY_STAFF = "CANCELLED_BY_STAFF",
+  CANCEL_REQUESTED = "CANCEL_REQUESTED",
+  CANCEL_APPROVED = "CANCEL_APPROVED",
+  CANCEL_REJECTED = "CANCEL_REJECTED",
+}
+
+/** `order_logs.actor_type` — who wrote a single audit row. */
+export enum OrderLogActorType {
+  CUSTOMER = "CUSTOMER",
+  STAFF = "STAFF",
+  SYSTEM = "SYSTEM",
 }
 
 export enum PaymentStatus {

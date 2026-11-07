@@ -302,9 +302,13 @@ export const OrderListScreen: React.FC<OrderListScreenProps> = ({
 
       if (!originalA || !originalB) return 0;
 
-      // First priority: Orders that need confirmation come first
-      const needsConfirmationA = a.originalStatus === OrderStatus.NEED_CUSTOMER_CONFIRMATION;
-      const needsConfirmationB = b.originalStatus === OrderStatus.NEED_CUSTOMER_CONFIRMATION;
+      // First priority: Orders that need the customer's answer come first
+      const needsConfirmationA =
+        a.originalStatus === OrderStatus.NEED_CUSTOMER_CONFIRMATION ||
+        a.originalStatus === OrderStatus.CANCEL_REQUESTED;
+      const needsConfirmationB =
+        b.originalStatus === OrderStatus.NEED_CUSTOMER_CONFIRMATION ||
+        b.originalStatus === OrderStatus.CANCEL_REQUESTED;
 
       if (needsConfirmationA && !needsConfirmationB) return -1; // A comes first
       if (!needsConfirmationA && needsConfirmationB) return 1; // B comes first
