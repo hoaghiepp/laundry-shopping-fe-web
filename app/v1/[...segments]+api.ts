@@ -26,6 +26,10 @@ const STRIP_REQUEST = new Set([
   "content-length",
   "accept-encoding",
   "connection",
+  // Server-to-server call: forwarding the browser Origin makes the backend run
+  // its CORS check against this web domain and answer 403 "Invalid CORS request"
+  // whenever that origin is missing from CORS_ALLOWED_ORIGIN_PATTERNS.
+  "origin",
 ]);
 
 function buildUpstreamUrl(request: Request): string {
