@@ -1,3 +1,4 @@
+import { isCancelledLikeStatus } from "@/components/orders/utils/orderHelpers";
 import { logisticService } from "@/services/api/logisticService";
 import { orderService } from "@/services/api/orderService";
 import {
@@ -19,10 +20,19 @@ async function searchAll(body: { current_store_id: string; status: string }) {
   });
 }
 
-async function withCustomer(group: OrderGroup): Promise<OrderGroup> {
+/**
+ * Attaches customer info. Returns null when the hub must not ship the order:
+ * a cancelled/rejected order's garments go back to the customer, not to the factory.
+ * Factory-side groups are kept, since those garments still have to return to the hub.
+ */
+async function withCustomer(
+  group: OrderGroup,
+  direction: TransportDirection
+): Promise<OrderGroup | null> {
   try {
     const response = await orderService.getStaffOrderById(group.orderId);
     const order = response?.data;
+    if (direction === "hub" && isCancelledLikeStatus(order?.status)) return null;
     const name = String(order?.shipping_full_name_snapshot || "").trim();
     const phone = String(order?.shipping_phone_number_snapshot || "").trim();
     if (!name && !phone) return group;
@@ -52,5 +62,8 @@ export async function loadTransportOrders(
           ).flat(),
           "factory"
         );
-  return Promise.all(groups.map(withCustomer));
+  const enriched = await Promise.all(
+    groups.map((group) => withCustomer(group, direction))
+  );
+  return enriched.filter((group): group is OrderGroup => group !== null);
 }
