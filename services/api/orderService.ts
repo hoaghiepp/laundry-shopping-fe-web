@@ -439,6 +439,32 @@ export const orderService = {
   },
 
   /**
+   * Staff handed the garments of a cancelled/rejected order back to the customer.
+   * Backend marks every SERVICE line `RETURNED` and moves the order to `CANCELLED`
+   * without refunding again. Idempotent; open orders answer `400060`.
+   */
+  returnClosedOrderToCustomer: async (orderId: string, note?: string): Promise<any> => {
+    const token = await SecureStore.getItemAsync(SecureStoreKeys.LOGIN_TOKEN);
+    if (!token) {
+      throw new Error("Store token not found");
+    }
+    try {
+      const response = await userAxios.put(
+        `${API_BASE_URL}/v1/staff/orders/${orderId}/return-to-customer`,
+        { note },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error(extractApiErrorMessage(error, "Return order to customer failed"));
+    }
+  },
+
+  /**
    * Staff cancels an order. Unpaid orders are cancelled immediately; paid ones become
    * `CANCEL_REQUESTED` and wait for the customer. Safe to retry: a second call while the
    * request is pending returns the current order.

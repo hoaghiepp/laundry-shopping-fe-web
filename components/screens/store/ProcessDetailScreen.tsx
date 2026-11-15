@@ -1,3 +1,11 @@
+import { isCancelledLikeStatus } from "@/components/orders/utils/orderHelpers";
+import {
+  cancelNeedsCustomerConfirmation,
+  formatDateTime,
+  isCancelPending,
+  isOrderCancellable,
+  isStorePaymentConfirm,
+} from "@/components/orders/utils/orderUtils";
 import { CustomerInfoCard } from "@/components/store/CustomerInfoCard";
 import { Carrier } from "@/components/store/logistics/CarrierSelectionScreen";
 import { StepperProgress } from "@/components/store/StepperProgress";
@@ -11,20 +19,13 @@ import {
   ServiceOrderItemStatus,
 } from "@/constants/enum";
 import { storeMainContentPaddingTop } from "@/constants/storeWebLayout";
-import { compatAlert } from "@/lib/compatAlert";
-import { AddressLocation, goshipService } from "@/services/api/goshipService";
-import { extractApiErrorCode } from "@/services/api/apiUtils";
-import { logisticService } from "@/services/api/logisticService";
 import { useOrderStream } from "@/hooks/useOrderStream";
-import { Order, orderService, CANCEL_REASON_MAX_LENGTH } from "@/services/api/orderService";
+import { compatAlert } from "@/lib/compatAlert";
+import { extractApiErrorCode } from "@/services/api/apiUtils";
+import { AddressLocation, goshipService } from "@/services/api/goshipService";
+import { logisticService } from "@/services/api/logisticService";
+import { CANCEL_REASON_MAX_LENGTH, Order, orderService } from "@/services/api/orderService";
 import { staffOrderService } from "@/services/api/staffOrderService";
-import {
-  cancelNeedsCustomerConfirmation,
-  formatDateTime,
-  isCancelPending,
-  isOrderCancellable,
-  isStorePaymentConfirm,
-} from "@/components/orders/utils/orderUtils";
 import { storeService } from "@/services/api/storeService";
 import { formatCurrencyVND } from "@/utils/format";
 import {
@@ -40,8 +41,7 @@ import {
   lineAmount,
   orderItemLabel,
   parentIdOf,
-  pieceLines,
-  serviceLineStatusLabel,
+  pieceLines
 } from "@/utils/serviceLines";
 import { FontAwesome5 } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState } from "react";
@@ -1351,6 +1351,14 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
       const shipmentResponse =
         await goshipService.createShipment(shipmentRequest);
 
+      // Closed order: garments left with the carrier -> handed back to the customer.
+      if (isCancelledLikeStatus(orderInfo.status)) {
+        await orderService.returnClosedOrderToCustomer(
+          orderInfo.id,
+          "Trả hàng cho khách qua đơn vị vận chuyển",
+        );
+      }
+
       compatAlert(
         "Thành công",
         `Đã tạo đơn vận chuyển thành công.\nMã vận đơn: ${shipmentResponse.tracking_number || "N/A"}`,
@@ -1383,18 +1391,20 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
           onPress: async () => {
             try {
               const currentStatus = orderInfo.status;
-              // Only FINISHED is accepted by the generic status endpoint; cancel
-              // statuses are rejected with `400057` and terminal orders stay as-is.
-              const nextStatus =
-                currentStatus === OrderStatus.PROCESSING
-                  ? OrderStatus.FINISHED
-                  : null;
+              const isClosedOrder = isCancelledLikeStatus(currentStatus);
 
-              if (nextStatus) {
+              if (currentStatus === OrderStatus.PROCESSING) {
                 await orderService.updateOrderStatus(orderInfo.id, {
-                  status: nextStatus,
+                  status: OrderStatus.FINISHED,
                   note: "Hoàn thành bởi shop vận chuyển",
                 });
+              } else if (isClosedOrder) {
+                // Cancelled/rejected: dedicated endpoint -> CANCELLED + lines RETURNED,
+                // no second refund (the generic status endpoint refuses CANCELLED: 400057).
+                await orderService.returnClosedOrderToCustomer(
+                  orderInfo.id,
+                  "Shop vận chuyển trả hàng cho khách",
+                );
               }
 
               // Refresh order to get latest status
@@ -1407,9 +1417,11 @@ export const ProcessDetailScreen: React.FC<ProcessDetailScreenProps> = ({
 
               compatAlert(
                 "Thành công",
-                nextStatus
+                currentStatus === OrderStatus.PROCESSING
                   ? "Đơn hàng đã được cập nhật hoàn thành."
-                  : "Đã ghi nhận trả hàng cho khách.",
+                  : isClosedOrder
+                    ? "Đã trả hàng cho khách. Đơn chuyển sang Đã hủy."
+                    : "Đã ghi nhận trả hàng cho khách.",
                 [{ text: "OK", onPress: () => onBack() }],
               );
             } catch (error) {

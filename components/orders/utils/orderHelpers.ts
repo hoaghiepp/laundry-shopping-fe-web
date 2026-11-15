@@ -1,5 +1,5 @@
 import { OrderCardData } from "@/components/store/OrderCard";
-import { IncidentStatus, OrderStatus, PaymentStatus, ServiceOrderItemStatus } from "@/constants/enum";
+import { IncidentStatus, OrderStatus, PaymentStatus, ProductType, ServiceOrderItemStatus } from "@/constants/enum";
 import { Order } from "@/services/api/orderService";
 import { formatCurrencyVND } from "@/utils/format";
 import { groupLinesByParent } from "@/utils/serviceLines";
@@ -251,6 +251,30 @@ export const formatRelativeTime = (dateString: string): string => {
   }
 };
 
+/** Statuses that end the order as cancelled (incl. customer rejections). */
+export const isCancelledLikeStatus = (status: OrderStatus | string | undefined): boolean =>
+  status === OrderStatus.CANCELLED ||
+  status === OrderStatus.CUSTOMER_REJECTED ||
+  status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED;
+
+/**
+ * A cancelled/rejected order whose garments were already handed back to the customer.
+ * The backend has no order status for this; the store marks every SERVICE line RETURNED.
+ */
+export const isClosedOrderReturnedToCustomer = (order: Order): boolean => {
+  if (!isCancelledLikeStatus(order.status)) return false;
+  const serviceItems =
+    order.order_items?.filter((item: any) => item.product_type === ProductType.SERVICE) ?? [];
+  return (
+    serviceItems.length > 0 &&
+    serviceItems.every(
+      (item: any) =>
+        item.service_status === ServiceOrderItemStatus.RETURNED ||
+        item.service_status === ServiceOrderItemStatus.COMPLETED
+    )
+  );
+};
+
 // Map Order to OrderCardData
 export const mapOrderToCardData = (
   order: Order,
@@ -264,7 +288,7 @@ export const mapOrderToCardData = (
     // Handle exception orders separately or skip
     if (tabStatus === "exception") {
       const cancelledPaymentBadge =
-        order.status === OrderStatus.CANCELLED
+        isCancelledLikeStatus(order.status)
           ? { text: "Đã hủy", color: "#991B1B", bgColor: "#FEE2E2" }
           : undefined;
 
@@ -303,8 +327,12 @@ export const mapOrderToCardData = (
     return null;
   }
 
+  const isCancelled = isCancelledLikeStatus(order.status);
+  // Status badge already says "Đã hủy" for these card statuses -> don't repeat it.
+  const statusBadgeShowsCancelled =
+    tabStatus === "cancelled" || tabStatus === "cancelled_waiting_return";
   const cancelledPaymentBadge =
-    order.status === OrderStatus.CANCELLED
+    isCancelled && !statusBadgeShowsCancelled
       ? { text: "Đã hủy", color: "#991B1B", bgColor: "#FEE2E2" }
       : undefined;
 
@@ -330,8 +358,9 @@ export const mapOrderToCardData = (
       order.same_day_service && (order.same_day_service_fee ?? 0) > 0
         ? formatCurrencyVND(order.same_day_service_fee ?? 0)
         : undefined,
-    paymentStatusBadge:
-      cancelledPaymentBadge ?? getPaymentStatusBadge(order.payment_status),
+    paymentStatusBadge: isCancelled
+      ? cancelledPaymentBadge
+      : getPaymentStatusBadge(order.payment_status),
     createdTime: order.created_date
       ? formatCreatedTime(order.created_date)
       : undefined,

@@ -1,7 +1,7 @@
 import { ChangePasswordScreen } from "@/components/auth";
 import { useOrderStream } from "@/hooks/useOrderStream";
 import { PromotionScreen } from "@/components/factory-screens";
-import { isOnlyGoodsOrder } from "@/components/orders";
+import { isClosedOrderReturnedToCustomer, isOnlyGoodsOrder } from "@/components/orders";
 import {
     AddInventoryScreen,
     CustomerDetailScreen,
@@ -526,6 +526,7 @@ export default function StoreHomeScreen() {
 
     // Check if order is CANCELLED
     if (order.status === OrderStatus.CANCELLED || order.status === OrderStatus.CUSTOMER_REJECTED || order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED) {
+      if (isClosedOrderReturnedToCustomer(order)) return false;
       return order.order_items.some((item: any) => item.product_type === ProductType.SERVICE);
     }
 

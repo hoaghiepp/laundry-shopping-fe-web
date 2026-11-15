@@ -6,8 +6,8 @@ import {
     OrderTab,
     OrderTabs,
     areAllServicesDone,
+    isClosedOrderReturnedToCustomer,
     isOnlyGoodsOrder,
-    mapOrderStatusToTab,
     mapOrderToCardData
 } from "@/components/orders";
 import { loadTransportOrders } from "@/components/orders/loadTransportOrders";
@@ -117,7 +117,8 @@ function orderMatchesStoreTab(tab: OrderTab, order: Order): boolean {
         (isStorePaymentConfirm(order.payment_status) &&
           order.status !== OrderStatus.FINISHED &&
           order.status !== OrderStatus.CANCELLED &&
-          order.status !== OrderStatus.CUSTOMER_REJECTED)
+          order.status !== OrderStatus.CUSTOMER_REJECTED &&
+          order.status !== OrderStatus.CUSTOMER_INCIDENTS_REJECTED)
       );
     case "finished":
       return order.status === OrderStatus.FINISHED;
@@ -125,6 +126,7 @@ function orderMatchesStoreTab(tab: OrderTab, order: Order): boolean {
       return (
         order.status === OrderStatus.CANCELLED ||
         order.status === OrderStatus.CUSTOMER_REJECTED ||
+        order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED ||
         order.status === OrderStatus.CANCEL_REQUESTED
       );
     case "processing":
@@ -151,6 +153,8 @@ function orderMatchesStoreTab(tab: OrderTab, order: Order): boolean {
         );
       });
     case "waiting_return":
+      // Already handed back to the customer: only "Đã hủy" keeps it.
+      if (isClosedOrderReturnedToCustomer(order)) return false;
       if (order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED) return true;
       if (order.status === OrderStatus.CUSTOMER_REJECTED) {
         return orderHasServiceItems(order);
@@ -200,7 +204,12 @@ function cardStatusForTab(
   }
   if (tab === "waiting_transport") return "waiting_transport";
   if (tab === "waiting_return") {
-    if (order.status === OrderStatus.CANCELLED) return "cancelled_waiting_return";
+    if (
+      order.status === OrderStatus.CANCELLED ||
+      order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED
+    ) {
+      return "cancelled_waiting_return";
+    }
     if (order.status === OrderStatus.CUSTOMER_REJECTED) {
       return "customer_rejected_waiting_return";
     }
@@ -216,6 +225,116 @@ function orderHasServiceItems(order: Order): boolean {
       (item: any) => item.product_type === ProductType.SERVICE
     ) || [];
   return serviceItems.length > 0;
+}
+
+/** True when any tracking item of the order is currently at the given store (items received). */
+function hasTrackingAtStore(trackingItems: any[] | undefined, storeId: string): boolean {
+  if (!trackingItems || trackingItems.length === 0) return false;
+  return trackingItems.some(
+    (item: any) => item?.current_store_id && item.current_store_id === storeId
+  );
+}
+
+/** True when any tracking item of the order is at a store other than the given one. */
+function hasTrackingAtOtherStore(trackingItems: any[] | undefined, storeId: string): boolean {
+  if (!trackingItems || trackingItems.length === 0) return false;
+  return trackingItems.some(
+    (item: any) => item?.current_store_id && item.current_store_id !== storeId
+  );
+}
+
+/** Orders whose tab membership depends on where their tracking items are. */
+function needsTrackingForTabs(order: Order): boolean {
+  switch (order.status) {
+    case OrderStatus.CANCELLED:
+    case OrderStatus.CUSTOMER_INCIDENTS_REJECTED:
+      return true;
+    case OrderStatus.CUSTOMER_REJECTED:
+      return orderHasServiceItems(order);
+    case OrderStatus.PROCESSING:
+      return orderMatchesStoreTab("waiting_return", order);
+    default:
+      return false;
+  }
+}
+
+/** "Chờ trả" rule shared by the tab list and the tab counter. */
+function isWaitingReturnOrder(
+  order: Order,
+  trackingItems: any[] | undefined,
+  storeId: string
+): boolean {
+  switch (order.status) {
+    case OrderStatus.CANCELLED:
+    case OrderStatus.CUSTOMER_REJECTED:
+    case OrderStatus.CUSTOMER_INCIDENTS_REJECTED:
+      // Only once the returned items are received at this store,
+      // and until they are handed back to the customer (then only "Đã hủy").
+      return (
+        orderHasServiceItems(order) &&
+        !isClosedOrderReturnedToCustomer(order) &&
+        hasTrackingAtStore(trackingItems, storeId)
+      );
+    case OrderStatus.PROCESSING:
+      return (
+        orderMatchesStoreTab("waiting_return", order) &&
+        !hasTrackingAtOtherStore(trackingItems, storeId)
+      );
+    default:
+      return false;
+  }
+}
+
+/** "Đã hủy" rule shared by the tab list and the tab counter. */
+function isCancelledTabOrder(
+  order: Order,
+  trackingItems: any[] | undefined,
+  storeId: string
+): boolean {
+  switch (order.status) {
+    case OrderStatus.CANCEL_REQUESTED:
+    case OrderStatus.CUSTOMER_REJECTED:
+    case OrderStatus.CUSTOMER_INCIDENTS_REJECTED:
+      return true;
+    case OrderStatus.CANCELLED:
+      // Handed back to the customer, or its returned items are at this store.
+      return (
+        isClosedOrderReturnedToCustomer(order) ||
+        hasTrackingAtStore(trackingItems, storeId)
+      );
+    default:
+      return false;
+  }
+}
+
+/** "Đang xử lý" rule shared by the tab list and the tab counter. */
+function isProcessingTabOrder(
+  order: Order,
+  trackingItems: any[] | undefined,
+  storeId: string
+): boolean {
+  const hasFactory = !!order.factory_id && order.factory_id !== "";
+  switch (order.status) {
+    case OrderStatus.NEED_CUSTOMER_CONFIRMATION:
+      return true;
+    case OrderStatus.PROCESSING:
+      if (hasFactory) return true;
+      return (
+        isOnlyGoodsOrder(order) &&
+        !order.order_items?.some(
+          (item) => item.goods_status === GoodsOrderItemStatus.CREATED
+        )
+      );
+    case OrderStatus.CANCELLED:
+      // Cancelled while still at the factory: keep it visible until it comes back.
+      return (
+        hasFactory &&
+        !hasTrackingAtStore(trackingItems, storeId) &&
+        hasTrackingAtStore(trackingItems, order.factory_id as string)
+      );
+    default:
+      return false;
+  }
 }
 
 interface OrdersScreenProps {
@@ -648,7 +767,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
       if (tab === "waiting_return") {
         const [
           processingResponse,
-          // cancelledResponse,
+          cancelledResponse,
           customerRejectedResponse,
           customerIncidentsRejectedResponse,
         ] = await Promise.all([
@@ -660,14 +779,14 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             },
             { page, size: PAGE_SIZE }
           ),
-          // orderService.searchStoreOrders(
-          //   {
-          //     hub_id: storeId,
-          //     status: OrderStatus.CANCELLED,
-          //     fetch_order_items: true,
-          //   },
-          //   { page, size: PAGE_SIZE }
-          // ),
+          orderService.searchStoreOrders(
+            {
+              hub_id: storeId,
+              status: OrderStatus.CANCELLED,
+              fetch_order_items: true,
+            },
+            { page, size: PAGE_SIZE }
+          ),
           orderService.searchStoreOrders(
             {
               hub_id: storeId,
@@ -722,21 +841,14 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
           );
         });
 
-        // Filter CANCELLED orders: must have service items
-        // We'll filter by tracking items later, but first filter by service items
-        const customerRejectedOrders = customerIncidentsRejectedResponse.data.filter((order) => {
-          const serviceItems =
-            order.order_items?.filter(
-              (item: any) => item.product_type === ProductType.SERVICE
-            ) || [];
-
-          return serviceItems.length > 0;
-        });
-
-        // Filter CUSTOMER_REJECTED: only orders with services need waiting_return (returns flow)
-        // const customerRejectedOrders = customerRejectedResponse.data.filter((order) =>
-        //   orderHasServiceItems(order)
-        // );
+        // CANCELLED / CUSTOMER_REJECTED: only orders with services have items to return.
+        // They are further filtered by tracking items below (must be received at this store).
+        const cancelledOrdersWithServices = (cancelledResponse.data || []).filter(
+          (order) => orderHasServiceItems(order)
+        );
+        const customerRejectedOrders = (customerRejectedResponse.data || []).filter(
+          (order) => orderHasServiceItems(order)
+        );
 
         // CUSTOMER_INCIDENTS_REJECTED: always goes to waiting_return (not cancelled)
         const customerIncidentsRejectedOrders =
@@ -745,7 +857,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         // Combine all (before tracking filter)
         let filteredOrders = [
           ...processingOrders,
-          // ...cancelledOrdersWithServices,
+          ...cancelledOrdersWithServices,
           ...customerRejectedOrders,
           ...customerIncidentsRejectedOrders,
         ];
@@ -780,45 +892,9 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             }
 
             // Filter orders based on tracking items
-            filteredOrders = filteredOrders.filter((order) => {
-              const trackingItems = trackingItemsByOrderId.get(order.id);
-
-              // For CANCELLED orders: only include if they have tracking items at current store
-              if (order.status === OrderStatus.CANCELLED) {
-                if (!trackingItems || trackingItems.length === 0) {
-                  return false; // Exclude CANCELLED orders without tracking items
-                }
-                // Check if any tracking item has current_store_id == storeId
-                const hasTrackingItemsAtCurrentStore = trackingItems.some(
-                  (item: any) => item.current_store_id && item.current_store_id === storeId
-                );
-                return hasTrackingItemsAtCurrentStore;
-              }
-
-              // CUSTOMER_INCIDENTS_REJECTED: show in waiting_return only if service tracking is at current store
-              if (order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED) {
-                if (!trackingItems || trackingItems.length === 0) {
-                  return false;
-                }
-                return trackingItems.some(
-                  (item: any) =>
-                    item.current_store_id && item.current_store_id === storeId
-                );
-              }
-
-              // For other orders: exclude if tracking items are at a different store
-              if (!trackingItems || trackingItems.length === 0) {
-                return true; // Include orders without tracking items (non-CANCELLED)
-              }
-
-              // Check if any tracking item has current_store_id != storeId
-              const hasTrackingItemsAtOtherStore = trackingItems.some(
-                (item: any) => item.current_store_id && item.current_store_id !== storeId
-              );
-
-              // Exclude orders that have tracking items at a different store
-              return !hasTrackingItemsAtOtherStore;
-            });
+            filteredOrders = filteredOrders.filter((order) =>
+              isWaitingReturnOrder(order, trackingItemsByOrderId.get(order.id), storeId)
+            );
           }
         } catch (error) {
           console.error("Failed to filter orders by tracking items:", error);
@@ -829,12 +905,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         const cardDataList = filteredOrders
           .map((order) => {
             // Use special status for cancelled and customer_rejected orders in waiting_return tab
-            const statusOverride =
-              order.status === OrderStatus.CANCELLED
-                ? "cancelled_waiting_return"
-                : order.status === OrderStatus.CUSTOMER_REJECTED
-                  ? "customer_rejected_waiting_return"
-                  : "waiting_return";
+            const statusOverride = cardStatusForTab("waiting_return", order);
 
             // For split shipment orders: show only goods if not all services are done
             // Show full order if all services are done
@@ -1080,14 +1151,22 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             { page, size: PAGE_SIZE, sort: "createdDate,desc" }
           );
 
-          // Filter CUSTOMER_REJECTED orders: must have service items
-          const customerRejectedOrders = customerRejectedResponse.data.filter((order) => {
-            const serviceItems =
-              order.order_items?.filter(
-                (item: any) => item.product_type === ProductType.SERVICE
-              ) || [];
-            return serviceItems.length === 0;
-          });
+          // Rejecting an incident cancels the order (CUSTOMER_INCIDENTS_REJECTED).
+          const customerIncidentsRejectedResponse = await orderService.searchStoreOrders(
+            {
+              hub_id: storeId,
+              status: OrderStatus.CUSTOMER_INCIDENTS_REJECTED,
+              fetch_order_items: true,
+            },
+            { page, size: PAGE_SIZE, sort: "createdDate,desc" }
+          );
+
+          // Rejected orders are cancelled: always listed here so staff can follow them,
+          // and also listed in "Chờ trả" once returned items are received at this store.
+          const customerRejectedOrders = [
+            ...(customerRejectedResponse.data || []),
+            ...(customerIncidentsRejectedResponse.data || []),
+          ];
 
           filteredOrders = [
             ...cancelledOrders,
@@ -1095,7 +1174,7 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             ...(cancelRequestedResponse.data || []),
           ];
 
-          // Filter CANCELLED orders: only include if they have tracking items at current store
+          // Filter CANCELLED orders by tracking items at current store
           try {
             const cancelledOrderIds = cancelledOrders.map((order) => order.id);
             const trackingItemsByOrderId = new Map<string, any[]>();
@@ -1119,17 +1198,9 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             }
 
             // Filter CANCELLED orders: only include if they have tracking items at current store
-            const filteredCancelledOrders = cancelledOrders.filter((order) => {
-              const trackingItems = trackingItemsByOrderId.get(order.id);
-              if (!trackingItems || trackingItems.length === 0) {
-                return false; // Exclude CANCELLED orders without tracking items
-              }
-              // Check if any tracking item has current_store_id == storeId
-              const hasTrackingItemsAtCurrentStore = trackingItems.some(
-                (item: any) => item.current_store_id && item.current_store_id === storeId
-              );
-              return hasTrackingItemsAtCurrentStore;
-            });
+            const filteredCancelledOrders = cancelledOrders.filter((order) =>
+              isCancelledTabOrder(order, trackingItemsByOrderId.get(order.id), storeId)
+            );
 
             filteredOrders = [
               ...filteredCancelledOrders,
@@ -1166,17 +1237,9 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
             }
 
             // Filter CANCELLED orders: only include if they have tracking items at current store
-            filteredOrders = cancelledOrders.filter((order) => {
-              const trackingItems = trackingItemsByOrderId.get(order.id);
-              if (!trackingItems || trackingItems.length === 0) {
-                return false; // Exclude CANCELLED orders without tracking items
-              }
-              // Check if any tracking item has current_store_id == storeId
-              const hasTrackingItemsAtCurrentStore = trackingItems.some(
-                (item: any) => item.current_store_id && item.current_store_id === storeId
-              );
-              return hasTrackingItemsAtCurrentStore;
-            });
+            filteredOrders = cancelledOrders.filter((order) =>
+              isCancelledTabOrder(order, trackingItemsByOrderId.get(order.id), storeId)
+            );
           } catch (error) {
             console.error("Failed to filter CANCELLED orders by tracking items:", error);
             filteredOrders = cancelledOrders;
@@ -1247,10 +1310,8 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         cancelled: 0,
       };
 
-      let waitingOrderIds = new Set<string>();
       try {
         const transportGroups = await loadTransportOrders(storeId, "hub");
-        waitingOrderIds = new Set(transportGroups.map((group) => group.orderId));
         counts.waiting_transport = transportGroups.length;
       } catch (error) {
         console.error("Failed to fetch tracking items for count:", error);
@@ -1265,168 +1326,36 @@ export const OrdersScreen: React.FC<OrdersScreenProps> = ({
         { page: 0, size: 1000 }
       );
 
-      // Fetch tracking items for CANCELLED orders to check if they're at current store
-      const cancelledOrderIds = response.data
-        .filter((order) => order.status === OrderStatus.CANCELLED)
+      // Fetch tracking items for orders whose tab depends on where their items are
+      const trackedOrderIds = response.data
+        .filter((order) => needsTrackingForTabs(order))
         .map((order) => order.id);
       const trackingItemsByOrderId = new Map<string, any[]>();
-
-      if (cancelledOrderIds.length > 0) {
-        try {
-          for (const orderId of cancelledOrderIds) {
-            try {
-              const trackingResponse = await logisticService.searchTrackingItems(
-                {
-                  order_id: orderId,
-                },
-                { page: 0, size: 1000 }
-              );
-
-              if (trackingResponse?.data && Array.isArray(trackingResponse.data)) {
-                trackingItemsByOrderId.set(orderId, trackingResponse.data);
-              }
-            } catch (error) {
-              console.error(`Failed to fetch tracking items for order ${orderId}:`, error);
+      await Promise.all(
+        trackedOrderIds.map(async (orderId) => {
+          try {
+            const trackingResponse = await logisticService.searchTrackingItems(
+              { order_id: orderId },
+              { page: 0, size: 1000 }
+            );
+            if (trackingResponse?.data && Array.isArray(trackingResponse.data)) {
+              trackingItemsByOrderId.set(orderId, trackingResponse.data);
             }
+          } catch (error) {
+            console.error(`Failed to fetch tracking items for order ${orderId}:`, error);
           }
-        } catch (error) {
-          console.error("Failed to fetch tracking items for CANCELLED orders:", error);
-        }
-      }
+        })
+      );
 
+      // Same rules as fetchOrdersForTab; an order may belong to several tabs
+      // (e.g. rejected order received back: "Chờ trả" + "Đã hủy").
       response.data.forEach((order) => {
-        // Check if order has service items
-        const serviceItems =
-          order.order_items?.filter(
-            (item: any) => item.product_type === ProductType.SERVICE
-          ) || [];
-        const hasServiceItems = serviceItems.length > 0;
-
-        // Check if order has factory_id (for factory tab counting)
-        const hasFactoryId = order.factory_id && order.factory_id !== "";
-
-        // Skip if order is in factory tab (orders with factory_id should only be counted in factory tab)
-        const isInFactory = hasFactoryId;
-
-        // Skip if order is in waiting_transport (already counted above)
-        // Check if order should be in waiting_transport (only orders with services, not goods-only)
-        const isInWaitingTransport = waitingOrderIds.has(order.id);
-
-        // Check if order is in waiting_return tab
-        // CUSTOMER_INCIDENTS_REJECTED OR
-        // CANCELLED orders with service items OR 
-        // CUSTOMER_REJECTED with service items OR
-        // PROCESSING orders with all service items DELIVERING OR
-        // PROCESSING orders with only goods that have CREATED status items OR
-        // PROCESSING orders with is_split_shipment = true
-        const isWaitingReturn = (() => {
-          // Exclude orders with factory_id (they belong in factory tab)
-          if (isInFactory) return false;
-          if (order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED) {
-            return true;
-          }
-          if (order.status === OrderStatus.CUSTOMER_REJECTED && hasServiceItems) {
-            return true;
-          }
-          if (order.status === OrderStatus.PROCESSING) {
-            // Goods-only orders with CREATED items go to waiting_return
-            if (isOnlyGoodsOrder(order)) {
-              const hasCreatedGoodsItems = order.order_items?.some(
-                (item: any) => item.goods_status === GoodsOrderItemStatus.CREATED
-              );
-              return hasCreatedGoodsItems;
-            }
-            // Orders with services: all service items must be DELIVERING
-            return (
-              hasServiceItems &&
-              serviceItems.every(
-                (item: any) =>
-                  item.service_status === ServiceOrderItemStatus.DELIVERING
-              )
-            );
-          }
-          return false;
-        })();
-
-
-        // Check if order is cancelled or customer rejected
-        if (order.status === OrderStatus.CANCEL_REQUESTED) {
-          // Pending cancellation: shown in the cancelled tab, not yet final.
-          counts.cancelled++;
-        } else if (order.status === OrderStatus.CANCELLED) {
-          counts.cancelled++;
-          // Only count CANCELLED orders if they have tracking items at current store
-          const trackingItems = trackingItemsByOrderId.get(order.id);
-          const hasTrackingItemsAtCurrentStore = trackingItems && trackingItems.length > 0 && trackingItems.some(
-            (item: any) => item.current_store_id && item.current_store_id === storeId
-          );
-
-          if (hasTrackingItemsAtCurrentStore) {
-            // Also count cancelled orders with service items in waiting_return (if not in factory)
-            if (hasServiceItems && !isInFactory) {
-              counts.waiting_return++;
-            }
-          }
-        } else if (order.status === OrderStatus.CUSTOMER_INCIDENTS_REJECTED) {
-          const trackingItems = trackingItemsByOrderId.get(order.id);
-          const hasTrackingItemsAtCurrentStore =
-            trackingItems &&
-            trackingItems.length > 0 &&
-            trackingItems.some(
-              (item: any) =>
-                item.current_store_id && item.current_store_id === storeId
-            );
-          if (hasTrackingItemsAtCurrentStore) {
-            counts.waiting_return++;
-          }
-        } else if (order.status === OrderStatus.CUSTOMER_REJECTED) {
-          // CUSTOMER_REJECTED orders go to waiting_return (if not in factory)
-          if (hasServiceItems && !isInFactory) {
-            counts.waiting_return++;
-          }
-          if (!hasServiceItems) {
-            counts.cancelled++;
-          }
-        } else if (order.status === OrderStatus.FINISHED) {
-          counts.finished++;
-        } else if (isWaitingReturn) {
-          counts.waiting_return++;
-        } else if (order.status === OrderStatus.PROCESSING) {
-          // For PROCESSING orders, check if they should be in processing tab
-          // Only count if NOT in waiting_transport AND NOT in waiting_return AND NOT at factory
-          // Only count goods-only orders that don't have CREATED status items
-          // (goods-only orders with CREATED items are in waiting_return)
-          if (!isInWaitingTransport && !isWaitingReturn) {
-            if (isOnlyGoodsOrder(order)) {
-              const hasCreatedGoodsItems = order.order_items?.some(
-                (item: any) => item.goods_status === GoodsOrderItemStatus.CREATED
-              );
-              // Only count if it doesn't have CREATED items
-              if (!hasCreatedGoodsItems) {
-                counts.processing++;
-              }
-            }
-
-            if (isInFactory) {
-              counts.processing++;
-            }
-            // Note: Orders with services that are PROCESSING but not in waiting_transport
-            // (i.e., they are delivering - have PICKING status items) should NOT be in processing tab
-            // They should be in waiting_return or other tabs, so we don't count them here
-          }
-          // If isInWaitingTransport is true, the order is already counted in waiting_transport above
-          // If isWaitingReturn is true, the order is already counted in waiting_return above
-        } else {
-          // For other statuses (CREATED, NEED_CUSTOMER_CONFIRMATION, etc.), use the standard mapping
-          const tabStatus = mapOrderStatusToTab(order.status, order);
-          if (tabStatus === "new") counts.new++;
-          else if (tabStatus === "processing") counts.processing++;
-          if (tabStatus !== "new" && isStorePaymentConfirm(order.payment_status)) {
-            counts.new++;
-          }
-          // Don't count factory here as it's already counted above for PROCESSING orders
-          // Don't count waiting_transport here as it's already counted above
-        }
+        const trackingItems = trackingItemsByOrderId.get(order.id);
+        if (orderMatchesStoreTab("new", order)) counts.new++;
+        if (isProcessingTabOrder(order, trackingItems, storeId)) counts.processing++;
+        if (isWaitingReturnOrder(order, trackingItems, storeId)) counts.waiting_return++;
+        if (order.status === OrderStatus.FINISHED) counts.finished++;
+        if (isCancelledTabOrder(order, trackingItems, storeId)) counts.cancelled++;
       });
 
       setTabCounts(counts);
